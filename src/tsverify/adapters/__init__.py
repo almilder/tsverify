@@ -1,0 +1,1 @@
+"""Adapters shipped with tsverify."""

@@ -18,3 +18,4 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install ".[test]"
       - run: pytest --pyargs tsverify.selftest
+      - run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.oracle:OracleAdapter
