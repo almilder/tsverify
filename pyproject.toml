@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tsverify"
+dynamic = ["version"]
+description = "Analytic conformance suite for Thomson-scattering codes"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Avi Milder" }]
+dependencies = ["numpy>=2.0", "scipy>=1.10"]
+keywords = ["Thomson scattering", "plasma diagnostics", "verification"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Science/Research",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Repository = "https://github.com/almilder/tsverify"
+
+[tool.hatch.version]
+path = "src/tsverify/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tsverify"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tsverify/selftest"]
+addopts = "--strict-markers"
