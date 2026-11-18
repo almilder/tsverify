@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-18)
 
 Conformance tests that any code can run through an adapter (Phase 2).
 
