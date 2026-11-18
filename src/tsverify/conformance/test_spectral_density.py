@@ -8,7 +8,7 @@ import pytest
 from .. import oracle
 from ..cases import SPECTRUM_CASES
 from ..oracle import ELECTRON_MASS, Ion, Plasma
-from ._support import spectral_density
+from ._support import expected_spectral_density, spectral_density, spectral_errors
 
 
 @pytest.mark.parametrize("npts", [256, 2048])
@@ -16,8 +16,8 @@ from ._support import spectral_density
 def test_spectral_density_matches_the_oracle(ts_adapter, case, npts):
     lam = np.linspace(*case.detector.lam_range, npts)
     model = spectral_density(ts_adapter, case.plasma, lam)
-    expected = oracle.spectral_density(lam, case.plasma)
-    linf, l1 = oracle.relative_errors(model, expected)
+    expected = expected_spectral_density(ts_adapter.conventions, case.plasma, lam)
+    linf, l1 = spectral_errors(ts_adapter.conventions, model, expected)
     linf_tol, l1_tol = ts_adapter.tolerances.spectral_density[case.problem]
     assert linf < linf_tol and l1 < l1_tol, (
         f"{case.problem}-L2/{case}: S(k, w) departs from the oracle: "
@@ -30,8 +30,8 @@ def test_high_z_ion_acoustic_resonance(ts_adapter):
     plasma = Plasma(ne=0.5, Te=1.0, ions=(Ion(A=197.0, Z=40.0, Ti=0.25),))
     lam = np.linspace(525.0, 528.0, 8192)
     model = spectral_density(ts_adapter, plasma, lam)
-    expected = oracle.spectral_density(lam, plasma)
-    linf, _ = oracle.relative_errors(model, expected)
+    expected = expected_spectral_density(ts_adapter.conventions, plasma, lam)
+    linf, _ = spectral_errors(ts_adapter.conventions, model, expected)
     tol = ts_adapter.tolerances
     assert linf < tol.high_z_linf, f"high-Z IAW departs from the oracle by {linf:.2e}"
     for window in ((525.0, 526.45), (526.55, 528.0)):
@@ -67,6 +67,7 @@ def test_spectral_density_matches_the_oracle_across_plasmas(ts_adapter, plasma):
     lam = np.linspace(*SWEEP_LAM_RANGE, 4096)
     model = spectral_density(ts_adapter, plasma, lam)
     wings = np.abs(lam - plasma.lam) > 3.0
-    linf, _ = oracle.relative_errors(model[wings], oracle.spectral_density(lam[wings], plasma))
+    expected = expected_spectral_density(ts_adapter.conventions, plasma, lam[wings])
+    linf, _ = spectral_errors(ts_adapter.conventions, model[wings], expected)
     tol = ts_adapter.tolerances.sweep_linf
     assert linf < tol, f"A1-sweep: EPW wings depart from the oracle by {linf:.2e} (tol {tol:.0e})"

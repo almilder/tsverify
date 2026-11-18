@@ -9,10 +9,10 @@ physics it shares no code with: the Debye–Hückel sum rule, the kinetic Bohm�
 Selden's relativistic tables, and the Faddeeva function.
 
 It started as the physics test suite of [tsadar](https://github.com/ergodicio/tsadar) and is being
-extracted into a code-independent package. **Status: pre-release (0.2).** It contains the oracle, its
+extracted into a code-independent package. **Status: pre-release (0.3).** It contains the oracle, its
 self-tests, the case catalog, and conformance tests at the spectrum (L2) and detector (L3) depths that any
-Python-callable code can run through an adapter. Code conventions (flow sign, normalization, relativistic
-factor) are tsadar's for now; making them explicit options is next.
+Python-callable code can run through an adapter. Each code declares its own conventions, and convention probes
+tell a convention mismatch apart from a physics error.
 
 ## Install and check the oracle
 
@@ -30,14 +30,16 @@ is reported apart from a failure.
 
 ```python
 from tsverify.adapter import Adapter
+from tsverify.conventions import Conventions
 
 
 class MyCodeAdapter(Adapter):
     name = "mycode"
     features = frozenset({"multiple_ions", "ion_flow"})
+    conventions = Conventions(relativistic="none", absolute=False)
 
     def spectral_density(self, plasma, wavelengths_nm):
-        """L2: S per unit wavelength at ``wavelengths_nm``, in the units of tsverify.oracle.spectral_density."""
+        """L2: S at ``wavelengths_nm`` as the code reports it (see the conventions)."""
         ...
 
     def detector_spectrum(self, volume, detector):
@@ -62,6 +64,32 @@ runs the oracle itself as a code, which checks the tests. tsadar's adapter is in
 To run the tests inside your own suite, put `from tsverify.conformance import *` in a test module and
 provide a `ts_adapter` fixture.
 
+### Conventions
+
+Codes differ in how they write inputs and report outputs. tsverify's plasma description is canonical:
+flows `Va` and the electron drift `ud` are positive along k = k_s − k_i, and `ud` is relative to the
+charge-weighted ion fluid. An adapter declares how its code differs (`tsverify.conventions.Conventions`).
+tsverify then hands the code each plasma written its way, and computes the oracle's spectrum the way the
+code reports it.
+
+| Field | Values (canonical first) |
+|---|---|
+| `flow_sign` | `+1`: flows and drift positive along k_s − k_i; `−1`: along k_i − k_s |
+| `electron_drift` | `"ion_frame"`: relative to the ion fluid; `"lab"`: the lab-frame electron velocity |
+| `relativistic` | `"first_order"`: the (1 + 2ω/ω_L) factor; `"none"` (the A12 test is then skipped) |
+| `spectrum_per` | `"wavelength"` or `"frequency"` (L2 output; L3 is always integrated over wavelength) |
+| `dispersion_in_k` | `True`: k_s, k_i include the plasma dispersion; `False`: vacuum ω/c |
+| `absolute` | `True`: L2 in the oracle's absolute units; `False`: L2 compared as a shape |
+
+The **convention probes** are four small asymmetric plasmas: an ion flow, an electron drift, a drift with
+flowing ions, and broad EPW wings. When a code fails a probe, the probe retries every single-convention
+change and names the ones under which the code agrees with the oracle, for example "It agrees with the
+oracle if the code's flows and drift are positive along k_i − k_s (flow_sign=−1)". If none does, the
+failure is reported as a likely physics error.
+
+EDF velocities in `GaussianComponent` and `QuadratureEDF` are in units of √(T/m). A code that uses
+√(2T/m) rescales them in its adapter.
+
 ## Contents
 
 - `tsverify.oracle`: the collisionless spectral density S(k,ω) for Gaussian-mixture and kappa EDFs, the
@@ -74,10 +102,15 @@ provide a `ts_adapter` fixture.
 - `tsverify.conformance`: the code-under-test checks. They cover the L2 spectral density for every case at
   two resolutions, a high-Z IAW resonance, an A1 density/temperature/angle sweep (marked `slow`), and the
   L3 detector spectrum for every case. They also cover gradient and aperture averaging and invariance
-  under rewriting a plasma, plus the first-order relativistic spectrum against Selden's exact one.
+  under rewriting a plasma, plus the first-order relativistic spectrum against Selden's exact one and the
+  four convention probes.
+- `tsverify.conventions`: `Conventions`, `CANONICAL` and `TSADAR`.
+- `tsverify.instrument.Detector`: a spectrometer channel (pixel axis, Gaussian IRF, fit ranges, notch, peak
+  windows).
 - `tsverify.selftest`: the oracle against the Debye–Hückel sum rule, the kinetic Bohm–Gross and
-  screened sound-speed limits, quadrature against Faddeeva, and Selden's tables, plus the adapter
-  plumbing.
+  screened sound-speed limits, quadrature against Faddeeva, and Selden's tables. It also checks the
+  adapter plumbing, the convention options, and that each wrongly declared convention is named by a
+  probe.
 
 Units follow the case catalog: ne in 10^20 cm^-3, temperatures in keV, flows in 10^6 cm/s along k, and
 wavelengths in nm.

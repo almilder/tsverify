@@ -4,6 +4,7 @@
 suite, ``from tsverify.conformance import *`` in a test module with a ``ts_adapter`` fixture in scope.
 """
 
+from .test_conventions import test_convention_probe
 from .test_detector import test_detector_spectrum_matches_the_oracle
 from .test_relativistic import test_first_order_relativistic_accuracy_against_the_exact_spectrum
 from .test_spectral_density import (
@@ -19,6 +20,7 @@ from .test_volume import (
 )
 
 __all__ = [
+    "test_convention_probe",
     "test_aperture_weighted_sum_matches_the_oracle",
     "test_detector_spectrum_matches_the_oracle",
     "test_first_order_relativistic_accuracy_against_the_exact_spectrum",

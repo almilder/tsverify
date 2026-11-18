@@ -97,29 +97,47 @@ def form_factor_terms(k, omega, plasma: Plasma):
     return electron_part, ion_part, chi_e, chi_i
 
 
-def scattering_geometry(lam_nm, plasma: Plasma):
+def scattering_geometry(lam_nm, plasma: Plasma, *, dispersion_in_k=True):
     """``(k, omega, omega_l)`` along the spectrometer axis: the frequency shift and the Bragg wavenumber
-    of light scattered at ``lam_nm`` through ``plasma.angle_deg``, with the plasma dispersion of both waves."""
+    of light scattered at ``lam_nm`` through ``plasma.angle_deg``, with the plasma dispersion of both waves
+    (``dispersion_in_k=False``: vacuum wavenumbers ``omega / c``)."""
     omega_pe = plasma_frequency(plasma.ne)
     omega_s = _angular_frequency(lam_nm)
     omega_l = _angular_frequency(plasma.lam)
-    k_s = np.sqrt(omega_s**2 - omega_pe**2) / C_CM_PER_S
-    k_l = np.sqrt(omega_l**2 - omega_pe**2) / C_CM_PER_S
+    if dispersion_in_k:
+        k_s = np.sqrt(omega_s**2 - omega_pe**2) / C_CM_PER_S
+        k_l = np.sqrt(omega_l**2 - omega_pe**2) / C_CM_PER_S
+    else:
+        k_s = omega_s / C_CM_PER_S
+        k_l = omega_l / C_CM_PER_S
     theta = np.deg2rad(plasma.angle_deg)
     k = np.sqrt(k_s**2 + k_l**2 - 2.0 * k_s * k_l * np.cos(theta))
     return k, omega_s - omega_l, omega_l
 
 
-def spectral_density(lam_nm, plasma: Plasma, *, terms=False):
-    """``S`` per unit wavelength in tsadar's absolute units: :func:`form_factor_terms` times ``(1 + 2 omega/omega_L)``,
-    ``r_e^2 n_e`` and ``d omega / d lambda``. ``terms=True`` also returns the parts and susceptibilities.
+RELATIVISTIC = ("first_order", "none")
+PER = ("wavelength", "frequency")
+
+
+def spectral_density(lam_nm, plasma: Plasma, *, terms=False, relativistic="first_order", per="wavelength",
+                     dispersion_in_k=True):
+    """``S`` in tsadar's absolute units: :func:`form_factor_terms` times ``(1 + 2 omega/omega_L)``, ``r_e^2 n_e``
+    and ``d omega / d lambda``. ``terms=True`` also returns the parts and susceptibilities.
+
+    ``relativistic="none"`` drops ``(1 + 2 omega/omega_L)``; ``per="frequency"`` gives ``S`` per unit angular
+    frequency (rad/s) instead of per wavelength (cm); ``dispersion_in_k`` is passed to :func:`scattering_geometry`.
     """
+    if relativistic not in RELATIVISTIC:
+        raise ValueError(f"relativistic must be one of {RELATIVISTIC}, got {relativistic!r}")
+    if per not in PER:
+        raise ValueError(f"per must be one of {PER}, got {per!r}")
     lam_nm = np.asarray(lam_nm, dtype=float)
-    k, omega, omega_l = scattering_geometry(lam_nm, plasma)
+    k, omega, omega_l = scattering_geometry(lam_nm, plasma, dispersion_in_k=dispersion_in_k)
     electron_part, ion_part, chi_e, chi_i = form_factor_terms(k, omega, plasma)
 
-    scale = (1.0 + 2.0 * omega / omega_l) * CLASSICAL_ELECTRON_RADIUS_CM**2 * plasma.ne * 1.0e20
-    jacobian = 2.0 * np.pi * C_CM_PER_S / (lam_nm * 1.0e-7) ** 2
+    factor = (1.0 + 2.0 * omega / omega_l) if relativistic == "first_order" else 1.0
+    scale = factor * CLASSICAL_ELECTRON_RADIUS_CM**2 * plasma.ne * 1.0e20
+    jacobian = 2.0 * np.pi * C_CM_PER_S / (lam_nm * 1.0e-7) ** 2 if per == "wavelength" else 1.0
     electron_part = electron_part * scale * jacobian
     ion_part = ion_part * scale * jacobian
     total = electron_part + ion_part

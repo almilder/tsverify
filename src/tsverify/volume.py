@@ -43,17 +43,18 @@ class Volume:
     aperture: Aperture | None = None
 
 
-def _homogeneous(lam_nm, plasma, gradient):
+def _homogeneous(lam_nm, plasma, gradient, options):
     if gradient is None:
-        return oracle.spectral_density(lam_nm, plasma)
-    return np.mean([oracle.spectral_density(lam_nm, p) for p in gradient.plasmas(plasma)], axis=0)
+        return oracle.spectral_density(lam_nm, plasma, **options)
+    return np.mean([oracle.spectral_density(lam_nm, p, **options) for p in gradient.plasmas(plasma)], axis=0)
 
 
-def spectral_density(lam_nm, volume: Volume):
-    """The oracle's spectrum of ``volume``: the gradient's equal-weight mean, summed over the aperture with its weights."""
+def spectral_density(lam_nm, volume: Volume, **options):
+    """The oracle's spectrum of ``volume``: the gradient's equal-weight mean, summed over the aperture with its weights.
+    ``options`` go to :func:`tsverify.oracle.spectral_density`."""
     if volume.aperture is None:
-        return _homogeneous(lam_nm, volume.plasma, volume.gradient)
+        return _homogeneous(lam_nm, volume.plasma, volume.gradient, options)
     return sum(
-        w * _homogeneous(lam_nm, dataclasses.replace(volume.plasma, angle_deg=a), volume.gradient)
+        w * _homogeneous(lam_nm, dataclasses.replace(volume.plasma, angle_deg=a), volume.gradient, options)
         for a, w in zip(volume.aperture.angles_deg, volume.aperture.weights)
     )

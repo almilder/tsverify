@@ -17,9 +17,13 @@ def _peak(x, y):
 @pytest.mark.parametrize("theta", [45.0, 90.0, 135.0])
 @pytest.mark.parametrize("te", [0.5, 2.0, 5.0])
 def test_first_order_relativistic_accuracy_against_the_exact_spectrum(ts_adapter, te, theta, record_property):
+    if ts_adapter.conventions.relativistic == "none":
+        pytest.skip(f"{ts_adapter.name}: declares no relativistic factor")
     plasma = Plasma(ne=1.0e-6, Te=te, ions=(Ion(A=1.0, Z=1.0, Ti=te),), angle_deg=theta)
     lam = np.linspace(0.45 * plasma.lam, 1.6 * plasma.lam, 8192)
     model = spectral_density(ts_adapter, plasma, lam)
+    if ts_adapter.conventions.spectrum_per == "frequency":
+        model = model / lam**2
     eps = lam / plasma.lam - 1.0
     exact = oracle.selden_spectrum(eps, theta, te)
     model, exact = model / model.max(), exact / exact.max()

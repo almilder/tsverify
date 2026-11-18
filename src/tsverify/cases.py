@@ -36,6 +36,7 @@ EPW_DETECTOR = Detector(
     sigma=1.3,
     amp_ranges=((442.0, 522.0), (531.0, 628.0)),
     notch=(526.5, 24.0, 4.0),
+    peak_windows=((445.0, 520.0), (532.0, 625.0)),
 )
 
 IAW_DETECTOR = Detector(
@@ -45,6 +46,7 @@ IAW_DETECTOR = Detector(
     points_per_pixel=8,
     sigma=0.05,
     amp_ranges=((524.6, 526.4), (526.6, 528.4)),
+    peak_windows=((524.6, 526.45), (526.55, 528.4)),
 )
 
 

@@ -1,16 +1,20 @@
 """The interface a code under test implements.
 
-Each level is optional; a code overrides the ones it supports and lists its ``features``. A test that needs an
+Each level is optional; a code overrides the ones it supports, lists its ``features`` and declares its
+``conventions`` (:mod:`tsverify.conventions`; default canonical, which is tsadar's). A test that needs an
 unsupported level or feature is skipped as *not supported*, which is reported apart from a failure.
 
-- L2 ``spectral_density(plasma, wavelengths_nm) -> S``: the spectrum in the oracle's absolute units
-  (``tsverify.oracle.spectral_density``) at the given wavelengths.
+- L2 ``spectral_density(plasma, wavelengths_nm) -> S``: the spectrum at the given wavelengths, in the oracle's
+  units (``tsverify.oracle.spectral_density``) under the declared conventions.
 - L3 ``detector_spectrum(volume, detector) -> (pixel_centers_nm, values)``: pixel values of ``volume`` on
   ``detector``, normalized so the maximum inside ``detector.amp_ranges`` is ``detector.amplitude``.
+
+The plasma (and the volume's plasma) the adapter receives is already written in the code's conventions.
 """
 
 from __future__ import annotations
 
+from .conventions import CANONICAL
 from .oracle import GaussianComponent
 from .tolerances import REFERENCE
 from .volume import Volume
@@ -38,6 +42,7 @@ class NotSupported(Exception):
 class Adapter:
     name = "unnamed"
     features: frozenset = frozenset()
+    conventions = CANONICAL
     tolerances = REFERENCE
 
     def spectral_density(self, plasma, wavelengths_nm):

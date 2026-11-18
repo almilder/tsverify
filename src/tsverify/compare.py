@@ -6,7 +6,6 @@ from . import oracle
 from .tolerances import REFERENCE
 
 NOTCH_EDGE_SIGMAS = 2.0
-PEAK_WINDOWS = {"EPW": ((445.0, 520.0), (532.0, 625.0)), "IAW": ((524.6, 526.45), (526.55, 528.4))}
 
 
 def oracle_detector(det, centers, spectrum):
@@ -37,7 +36,7 @@ def assert_detector_matches(label, det, centers, model, expected, tolerances=REF
         f"Linf={linf:.2e} (tol {linf_tol:.1e}), L1={l1:.2e} (tol {l1_tol:.1e})"
     )
     peak_tol = tolerances.peak_nm[det.channel]
-    for window in PEAK_WINDOWS[det.channel]:
+    for window in det.peak_windows:
         shift = oracle.peak_wavelength(centers, model, window) - oracle.peak_wavelength(centers, expected, window)
         assert abs(shift) < peak_tol, (
             f"{label}: the detector moved the peak in {window} nm by {shift:+.4f} nm (tol {peak_tol:.0e} nm)"

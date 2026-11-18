@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+Code conventions as explicit options, plus convention probes (Phase 3).
+
+- `tsverify.conventions.Conventions`: `flow_sign`, `electron_drift` (ion frame or lab), `relativistic`
+  (first order or none), `spectrum_per` (wavelength or frequency), `dispersion_in_k` and `absolute`.
+  `CANONICAL` (= `TSADAR`) is the default. An adapter declares its code's conventions; the conformance tests
+  hand the code each plasma written its way (`express`) and compute the oracle's spectrum the way the code
+  reports it (`oracle_options`). Codes without absolute units are compared as shapes.
+- Oracle options: `spectral_density(..., relativistic=, per=, dispersion_in_k=)` and
+  `scattering_geometry(..., dispersion_in_k=)`. The defaults are bit-identical to 0.2.0 for every catalog
+  case.
+- `tsverify.conformance.test_convention_probe`: four probes (flow, drift, drift-frame, wings). On a failure, a
+  probe names every single-convention change under which the code agrees with the oracle, or reports a
+  likely physics error.
+  - Self-test: an oracle adapter that declares the canonical conventions but behaves as each of the 6
+    single-field alternatives is caught, and the right convention is named every time.
+  - An oracle adapter that declares and uses all-different conventions passes.
+- `Detector.peak_windows`: the peak-comparison windows now belong to the detector (EPW and IAW in the
+  catalog), not to a table keyed by channel name.
+- A12 is skipped for codes that declare no relativistic factor; per-frequency output is converted before the
+  shape comparison.
+- Gate against tsadar (branch `tsverify-phase3`, `TsadarAdapter.conventions = TSADAR`): 137 → 141 passed, the
+  4 new tests being the probes. Their Linf under the declared conventions is 2.1e-4 (drift-frame), 2.3e-4
+  (wings), 3.9e-4 (flow) and 6.2e-4 (drift), against a tolerance of 1e-3. No state changes, and all 29
+  recorded values are identical.
+
 ## 0.2.0 (2026-11-18)
 
 Conformance tests that any code can run through an adapter (Phase 2).
