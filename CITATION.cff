@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If tsverify contributes to published work, please cite it as below."
+title: "tsverify: an analytic conformance suite for Thomson-scattering codes"
+type: software
+authors:
+  - family-names: Milder
+    given-names: Avi
+    orcid: "https://orcid.org/0000-0002-9988-6109"
+license: BSD-3-Clause
+repository-code: "https://github.com/almilder/tsverify"
+keywords:
+  - Thomson scattering
+  - plasma diagnostics
+  - verification
+  - test suite
