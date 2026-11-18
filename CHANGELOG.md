@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-18)
 
 Extracted from tsadar's physics test suite (tsadar PR 164, main 8d41c99c), with no change in behaviour.
 
