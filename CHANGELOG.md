@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-11-20)
 
 File exchange, a command-line tool and reports (Phase 5).
 
