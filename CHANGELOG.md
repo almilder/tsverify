@@ -27,15 +27,26 @@ defects (Phase 4).
   no relativistic factor, and is converted to absolute units (S/2π · r_e² n_e).
   - It passes all 46 tests it supports. All four probes confirm the declared conventions. Kappa EDFs and L3
     are not supported.
-  - The worst peak-normalized Linf is 3.0e-4 (A3 flat top at 2048 points); A1 is within 4.2e-5. Z′ matches
-    the Faddeeva function exactly.
-  - The remaining difference, at the 1e-5 level, comes from the oracle's rounded constants (r_e = 2.8179e-13
-    cm, m_e c² = 510.9896 keV, m_p = 1836.1 m_e, kept from tsadar for bit-identity) against PlasmaPy's CODATA
-    values.
+  - With the CODATA constants (below), its worst Linf is 5.0e-10 (A1 sweep) and 2.4e-11 on the catalog
+    cases. Z′ matches the Faddeeva function exactly.
+- **The oracle's constants are now the CODATA 2022 values from NIST**
+  (https://physics.nist.gov/cuu/Constants/), each one cited in `oracle/constants.py`. Previously they were
+  tsadar's rounded values.
+
+  | Constant | Before | Now (CODATA 2022) | Relative change |
+  |---|---|---|---|
+  | m_e c² | 510.9896 keV | 510.99895069 keV | 1.8e-5 |
+  | m_p/m_e | 1836.1 | 1836.152673426 | 2.9e-5 |
+  | r_e | 2.8179e-13 cm | 2.8179403205e-13 cm | 1.4e-5 |
+  | c | 2.99792458e10 cm/s | unchanged (exact) | 0 |
+
+  - This deliberately ends bit-identity with 0.2.0. Spectra move by parts in 10⁵.
+  - With it, PlasmaPy agrees with the oracle to 5e-10 or better everywhere, down from 3.0e-4, so its whole
+    residual was the rounded constants.
 - The L2 tests record their measured Linf and L1 (`record_property`).
 - `tsverify.compare` holds `expected_spectral_density` and `spectral_errors`, so the diagnosis code needs no
-  pytest. `oracle.electron_phase_velocity` and `oracle.plasma_dispersion_derivative` are new; the default
-  oracle path stays bit-identical to 0.2.0 for every catalog case.
+  pytest. `oracle.electron_phase_velocity` and `oracle.plasma_dispersion_derivative` are new. With the old
+  constants, this refactor left the default oracle path bit-identical to 0.2.0 for every catalog case.
 - CI also runs the conformance tests against the toy code, plus a separate PlasmaPy job.
 - Gate against tsadar (branch `tsverify-phase4`):
   - `TsadarAdapter.zprime` exposes FormFactor's ion Z′ (its 0.01-step table, interpolated linearly, plus

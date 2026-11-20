@@ -66,7 +66,7 @@ runs the oracle itself as a code, which checks the tests. Two more adapters ship
 
 - `tsverify.adapters.plasmapy:PlasmaPyAdapter`: PlasmaPy's `thomson.spectral_density` (`pip install
   "tsverify[plasmapy]"`). It supports L1 and L2 for Maxwellian and Gaussian-mixture plasmas, and passes all 46
-  tests it supports. Its spectra agree with the oracle to 3.0e-4 or better, peak-normalized, and its Z′
+  tests it supports. Its spectra agree with the oracle to 5e-10 or better, peak-normalized, and its Z′
   matches the Faddeeva function exactly.
 - `tsverify.adapters.toy:ToyAdapter`: a small Maxwellian code with switchable defects (`ToyAdapter("flow-sign")`
   and so on), used to check that each defect is caught and named.
@@ -116,6 +116,9 @@ spacing), and the error of the rdWT table tsadar used before November 2026.
 
 EDF velocities in `GaussianComponent` and `QuadratureEDF` are in units of √(T/m). A code that uses
 √(2T/m) rescales them in its adapter.
+
+Physical constants are the CODATA 2022 values from NIST (https://physics.nist.gov/cuu/Constants/), cited in
+`tsverify/oracle/constants.py`.
 
 ## Contents
 
