@@ -43,6 +43,12 @@ defects (Phase 4).
   - This deliberately ends bit-identity with 0.2.0. Spectra move by parts in 10⁵.
   - With it, PlasmaPy agrees with the oracle to 5e-10 or better everywhere, down from 3.0e-4, so its whole
     residual was the rounded constants.
+  - Against tsadar `tsverify-phase4`, on the same 143 tests:
+    - Oracle on CODATA, tsadar still on rounded constants: 2 tests fail. The A1 electron-drift case at 2048
+      points reaches Linf 1.02e-3 and the drift probe 1.0e-3, against 1e-3.
+    - With tsadar on CODATA as well (a separate tsadar PR): 143 pass. The errors return to tsadar's own
+      numerical level (drift probe 6.16e-4; worst L2 1.80e-3, against 2.5e-3).
+    - The inverse-problem ratios move by at most 1.4e-4 relative.
 - The L2 tests record their measured Linf and L1 (`record_property`).
 - `tsverify.compare` holds `expected_spectral_density` and `spectral_errors`, so the diagnosis code needs no
   pytest. `oracle.electron_phase_velocity` and `oracle.plasma_dispersion_derivative` are new. With the old
