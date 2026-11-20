@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0 (2026-11-20)
 
 Known-defect signatures, an L1 Z′ level, and two more codes under test: PlasmaPy and a toy code with planted
 defects (Phase 4).
@@ -63,7 +63,9 @@ defects (Phase 4).
   - All 33 earlier recorded values are identical, plus 79 newly recorded L2 errors (worst 1.8e-3 on A3
     two-humped ions at 2048 points, against 2.5e-3).
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-11-20, tag only)
+
+Tagged on the Phase 3 commit, whose version string reads 0.3.0.dev0; there was no separate release commit.
 
 Code conventions as explicit options, plus convention probes (Phase 3).
 
