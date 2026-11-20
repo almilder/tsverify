@@ -1,3 +1,3 @@
 """tsverify: an analytic conformance suite for Thomson-scattering codes."""
 
-__version__ = "0.6.0.dev0"
+__version__ = "0.6.0"
