@@ -21,20 +21,23 @@ import numpy as np
 from . import oracle
 from .adapter import required_features
 from .cases import A1_CASES, SPECTRUM_CASES
+from . import fitting
 from .compare import detector_errors, expected_spectral_density, oracle_detector, spectral_errors
+from .fitting import FitProblem
 from .instrument import Detector
 from .oracle import ELECTRON_MASS, ELECTRON_MASS_KEV, Ion, Plasma
 from .signatures import explain_spectrum, verdict, zprime_signatures
 from .volume import Aperture, LinearGradient, Volume
 from .volume import spectral_density as volume_spectral_density
 
-KINDS = ("zprime", "spectral_density", "detector_spectrum")
+KINDS = ("zprime", "spectral_density", "detector_spectrum", "fit")
 
 
 @dataclass(frozen=True, eq=False)
 class Run:
     """One evaluation by the code: ``zprime`` at ``zeta``; ``spectral_density`` of ``plasma`` at ``wavelengths_nm``;
-    or ``detector_spectrum`` of ``volume`` on ``detector``."""
+    ``detector_spectrum`` of ``volume`` on ``detector``; or a ``fit`` of the problem ``problem(conventions, outputs)``
+    builds (canonical, with ``volume`` the truth), where ``outputs`` holds the outputs of the runs in ``needs``."""
 
     kind: str
     zeta: np.ndarray | None = None
@@ -42,11 +45,13 @@ class Run:
     wavelengths_nm: np.ndarray | None = None
     volume: Volume | None = None
     detector: Detector | None = None
+    problem: Callable | None = None
+    needs: tuple = ()
 
     def required_features(self):
         if self.kind == "spectral_density":
             return required_features(self.plasma)
-        if self.kind == "detector_spectrum":
+        if self.kind in ("detector_spectrum", "fit"):
             return required_features(self.volume.plasma, self.detector, self.volume)
         return set()
 
@@ -443,6 +448,215 @@ def rewritten_task(name, case, same_plasma):
     )
 
 
+# L4
+
+COUNTS = 1.0e4
+START_AMPLITUDE = 0.8 * COUNTS
+CALIBRATION_REALIZATIONS = 32
+CALIBRATION_SEED = 20261120
+FIT_PROBLEMS = (
+    ("epw-ne-Te", EPW_CASE, {"ne": 0.16, "Te": 0.78}),
+    ("iaw-Va-Ti", IAW_CASE, {"ion1.Va": -0.5, "ion1.Ti": 0.13}),
+)
+CRAMER_RAO_VARIANTS = ("self", "oracle")
+
+
+def _counts_detector(case):
+    return dataclasses.replace(case.detector, amplitude=COUNTS)
+
+
+def oracle_model(conventions, det):
+    """The oracle's detector spectrum on ``det`` as a function of the (canonical) volume."""
+    centers = np.linspace(*det.lam_range, det.pixels)
+    options = conventions.detector_options()
+    return lambda volume: oracle_detector(det, centers, lambda lam: volume_spectral_density(lam, volume, **options))
+
+
+def _oracle_data(case):
+    det = _counts_detector(case)
+    return lambda conventions, outputs: oracle_model(conventions, det)(Volume(case.plasma))
+
+
+def _problem(case, start, start_amplitude, data_of, variance_of=None):
+    """A problem builder: the truth volume of ``case`` with the free plasma parameters at ``start`` and the code's
+    amplitudes at ``start_amplitude``."""
+    det = _counts_detector(case)
+    truth = Volume(case.plasma)
+
+    def build(conventions, outputs):
+        data = np.asarray(data_of(conventions, outputs), dtype=float)
+        variance = variance_of(conventions) if variance_of else fitting.poisson_variance(data)
+        amplitudes = conventions.amplitude_names(det)
+        start_volume, _ = fitting.with_values(truth, {}, start)
+        mask = fitting.fit_mask(det, np.linspace(*det.lam_range, det.pixels))
+        free = tuple(start) + amplitudes
+        return FitProblem(start_volume, dict.fromkeys(amplitudes, start_amplitude), det, data, variance, mask, free)
+
+    return build
+
+
+def _fit_run(case, build, needs=()):
+    return Run("fit", volume=Volume(case.plasma), detector=_counts_detector(case), problem=build, needs=needs)
+
+
+def canonical_estimates(result, problem, conventions):
+    """``(estimates, sigmas)`` of a :class:`tsverify.fitting.FitResult` in the code's conventions, as canonical
+    values. A missing parameter raises KeyError."""
+    expressed = dataclasses.replace(problem.start, plasma=conventions.express(problem.start.plasma))
+    values = {name: float(result.estimates[name]) for name in problem.free}
+    volume, amplitudes = fitting.with_values(expressed, problem.start_amplitudes, values)
+    canonical = dataclasses.replace(volume, plasma=conventions.interpret(volume.plasma))
+    estimates = {name: float(fitting.value_of(canonical, amplitudes, name)) for name in problem.free}
+    sigmas = None
+    if result.sigmas is not None:
+        sigmas = {name: float(result.sigmas[name]) for name in problem.free}
+    return estimates, sigmas
+
+
+def _truth(case, name):
+    return COUNTS if fitting.is_amplitude(name) else fitting.get(case.plasma, name)
+
+
+def _at_truth(case, start):
+    return {k: _truth(case, k) for k in start}
+
+
+def recovery_task(name, case, start):
+    build = _problem(case, start, START_AMPLITUDE, _oracle_data(case))
+
+    def score(context, out):
+        estimates, _ = out["fit"]
+        tol = context.tolerances
+        measurements, checks, failed = {}, [], []
+        for parameter, value in estimates.items():
+            truth = _truth(case, parameter)
+            error = abs(value - truth)
+            allowed = tol.fit_rtol * abs(truth) + tol.fit_atol.get(fitting.base(parameter), 0.0)
+            measurements[parameter] = value
+            measurements[f"{parameter}: error / allowed"] = error / allowed
+            checks.append((f"|{parameter} - truth|", error, allowed))
+            if not error <= allowed:
+                failed.append(f"{parameter} = {value:.6g} against {truth:.6g} (allowed {allowed:.1e})")
+        message = f"L4-recovery/{name}: the fit of noiseless oracle data from a displaced start misses: " + "; ".join(failed)
+        return _verdict(not failed, measurements, checks, message)
+
+    return Task(f"L4/recovery/{name}", "test_fit_recovers_the_truth_from_oracle_data", "L4",
+                {"fit": _fit_run(case, build)}, score)
+
+
+_FACTORS = ((np.sqrt(2.0), "sqrt(2)"), (1.0 / np.sqrt(2.0), "1/sqrt(2)"), (2.0, "2"), (0.5, "1/2"))
+
+
+def _constant_factor(ratios):
+    for factor, label in _FACTORS:
+        if np.all(np.abs(np.asarray(ratios) / factor - 1.0) < 0.03):
+            return (
+                f" Every sigma is off by the same factor, {label}: the signature of a loss normalization. The Hessian "
+                "of chi^2 is twice that of -log L = chi^2/2, so using one where the other belongs scales sigma by "
+                "sqrt(2); a variance taken as a standard deviation, or the reverse, does the same at the bound's scale."
+            )
+    return ""
+
+
+def cramer_rao_task(name, case, start, variant):
+    """``self``: the code's own noiseless detector spectrum as data (needs L3); ``oracle``: oracle data."""
+    det = _counts_detector(case)
+    at_truth = _at_truth(case, start)
+    if variant == "self":
+        runs = {"spectrum": Run("detector_spectrum", volume=Volume(case.plasma), detector=det)}
+        build = _problem(case, at_truth, COUNTS, lambda conventions, outputs: outputs["spectrum"][1])
+        runs["fit"] = _fit_run(case, build, needs=("spectrum",))
+    else:
+        runs = {"fit": _fit_run(case, _problem(case, at_truth, COUNTS, _oracle_data(case)))}
+
+    def score(context, out):
+        _, sigmas = out["fit"]
+        if sigmas is None:
+            return "not supported", {}, [], "the code reports no uncertainties"
+        problem = out["fit problem"]
+        model = oracle_model(context.conventions, det)
+        truth = dict.fromkeys(problem.start_amplitudes, COUNTS)
+        bound = fitting.cramer_rao(model, Volume(case.plasma), truth, det, problem.free, problem.variance, problem.mask)
+        tol = context.tolerances.cramer_rao_self if variant == "self" else context.tolerances.cramer_rao_oracle
+        ratios = [sigmas[p] / b for p, b in zip(problem.free, bound)]
+        measurements = {f"{p}: sigma / cramer-rao": float(r) for p, r in zip(problem.free, ratios)}
+        checks = [(f"|{p}: sigma / cramer-rao - 1|", abs(r - 1.0), tol) for p, r in zip(problem.free, ratios)]
+        off = [f"{p} {r:.3f}" for p, r in zip(problem.free, ratios) if not abs(r - 1.0) < tol]
+        message = (
+            f"L4-cramer-rao/{name}/{variant}: the reported sigmas depart from the Cramér–Rao bound by more than "
+            f"{tol:.0%}: sigma / bound = " + ", ".join(off) + "." + _constant_factor(ratios)
+        )
+        return _verdict(not off, measurements, checks, message)
+
+    return Task(f"L4/cramer-rao/{name}/{variant}", "test_fit_uncertainty_matches_the_cramer_rao_bound", "L4", runs, score)
+
+
+def _width_reading(widths, tol):
+    if max(widths) > 1.0 + tol:
+        return (
+            " The estimates scatter more than the reported sigma. If the Cramér–Rao tests pass, the sigma is right for "
+            "an efficient estimator and the fit is not one: its objective is not the likelihood the sigma comes from, "
+            "for example unweighted least squares on counting noise with sigma from a variance-weighted Hessian."
+        )
+    if min(widths) < 1.0 - tol:
+        return (
+            " The estimates scatter less than the reported sigma: the sigma is overestimated, or the fit stops before "
+            "it converges and stays near its start."
+        )
+    return ""
+
+
+def _calibration_data(case, index, k):
+    """Realization ``k`` of counting noise on the oracle data: Gaussian with the Poisson variance, seeded."""
+
+    def data(conventions, outputs):
+        expected = _oracle_data(case)(conventions, outputs)
+        rng = np.random.default_rng((CALIBRATION_SEED, index, k))
+        return expected + rng.standard_normal(expected.shape) * np.sqrt(fitting.poisson_variance(expected))
+
+    return data
+
+
+def calibration_task(name, case, start, index):
+    at_truth = _at_truth(case, start)
+
+    def expected_variance(conventions):
+        return fitting.poisson_variance(_oracle_data(case)(conventions, {}))
+
+    n = CALIBRATION_REALIZATIONS
+    runs = {"reference": _fit_run(case, _problem(case, at_truth, COUNTS, _oracle_data(case)))}
+    for k in range(n):
+        data = _calibration_data(case, index, k)
+        runs[f"noisy{k:02d}"] = _fit_run(case, _problem(case, at_truth, COUNTS, data, expected_variance))
+    mean_tol, width_tol = 3.0 / np.sqrt(n), 3.0 / np.sqrt(2.0 * (n - 1))
+
+    def score(context, out):
+        reference, _ = out["reference"]
+        noisy = [out[f"noisy{k:02d}"] for k in range(n)]
+        if any(sigmas is None for _, sigmas in noisy):
+            return "not supported", {}, [], "the code reports no uncertainties"
+        measurements, checks, off = {}, [], []
+        for parameter in reference:
+            pulls = np.array([(est[parameter] - reference[parameter]) / sig[parameter] for est, sig in noisy])
+            mean, width = float(pulls.mean()), float(pulls.std(ddof=1))
+            within1, within2 = float(np.mean(np.abs(pulls) < 1.0)), float(np.mean(np.abs(pulls) < 2.0))
+            measurements |= {f"{parameter}: pull mean": mean, f"{parameter}: pull width": width,
+                             f"{parameter}: 1-sigma coverage": within1, f"{parameter}: 2-sigma coverage": within2}
+            checks += [(f"|{parameter} pull mean|", abs(mean), mean_tol),
+                       (f"|{parameter} pull width - 1|", abs(width - 1.0), width_tol)]
+            if not (abs(mean) < mean_tol and abs(width - 1.0) < width_tol):
+                off.append(f"{parameter}: mean {mean:+.2f}, width {width:.2f} (1-sigma coverage {within1:.0%})")
+        widths = [measurements[f"{p}: pull width"] for p in reference]
+        message = (
+            f"L4-calibration/{name}: over {n} noisy realizations, (estimate - noiseless estimate) / sigma should have "
+            f"mean 0 (within {mean_tol:.2f}) and width 1 (within {width_tol:.2f}): " + "; ".join(off) + "."
+            + (_constant_factor(widths) or _width_reading(widths, width_tol))
+        )
+        return _verdict(not off, measurements, checks, message)
+
+    return Task(f"L4/calibration/{name}", "test_fit_uncertainty_is_calibrated", "L4", runs, score, slow=True)
+
+
 def all_tasks(slow=True):
     """Every task, in the order of the conformance tests."""
     tasks = [zprime_task()]
@@ -456,4 +670,8 @@ def all_tasks(slow=True):
     tasks += [gradient_task(case) for case in (EPW_CASE, IAW_CASE)]
     tasks += [zero_gradient_task(), aperture_task()]
     tasks += [rewritten_task(*r) for r in REWRITTEN]
+    tasks += [recovery_task(*p) for p in FIT_PROBLEMS]
+    tasks += [cramer_rao_task(*p, variant) for p in FIT_PROBLEMS for variant in CRAMER_RAO_VARIANTS]
+    if slow:
+        tasks += [calibration_task(*p, index) for index, p in enumerate(FIT_PROBLEMS)]
     return tasks

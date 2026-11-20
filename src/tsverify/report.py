@@ -16,6 +16,7 @@ LEVELS = (
     ("A12", "A12: first-order relativistic spectrum against Selden's exact one"),
     ("L3", "L3: detector spectrum"),
     ("A10", "A10: gradient, aperture and rewritten plasmas"),
+    ("L4", "L4: fitting"),
 )
 STATUS = {"passed": "pass", "failed": "**FAIL**", "not supported": "not supported"}
 

@@ -10,6 +10,9 @@ unsupported level or feature is skipped as *not supported*, which is reported ap
   units (``tsverify.oracle.spectral_density``) under the declared conventions.
 - L3 ``detector_spectrum(volume, detector) -> (pixel_centers_nm, values)``: pixel values of ``volume`` on
   ``detector``, normalized so the maximum inside ``detector.amp_ranges`` is ``detector.amplitude``.
+- L4 ``fit(problem) -> FitResult``: fit a detector spectrum (:class:`tsverify.fitting.FitProblem`) and return the
+  estimates of its free parameters and, if the code has them, their uncertainties. Estimates are in the code's
+  conventions, like the start values it receives.
 
 The plasma (and the volume's plasma) the adapter receives is already written in the code's conventions.
 """
@@ -34,7 +37,7 @@ FEATURES = frozenset(
         "aperture",
     }
 )
-LEVELS = ("zprime", "spectral_density", "detector_spectrum")
+LEVELS = ("zprime", "spectral_density", "detector_spectrum", "fit")
 
 
 class NotSupported(Exception):
@@ -55,6 +58,9 @@ class Adapter:
 
     def detector_spectrum(self, volume, detector):
         raise NotSupported("detector_spectrum")
+
+    def fit(self, problem):
+        raise NotSupported("fit")
 
     def supports(self, level):
         return getattr(type(self), level) is not getattr(Adapter, level)

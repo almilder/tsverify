@@ -6,6 +6,11 @@ suite, ``from tsverify.conformance import *`` in a test module with a ``ts_adapt
 
 from .test_conventions import test_convention_probe
 from .test_detector import test_detector_spectrum_matches_the_oracle
+from .test_fit import (
+    test_fit_recovers_the_truth_from_oracle_data,
+    test_fit_uncertainty_is_calibrated,
+    test_fit_uncertainty_matches_the_cramer_rao_bound,
+)
 from .test_relativistic import test_first_order_relativistic_accuracy_against_the_exact_spectrum
 from .test_spectral_density import (
     test_high_z_ion_acoustic_resonance,
@@ -25,6 +30,9 @@ __all__ = [
     "test_aperture_weighted_sum_matches_the_oracle",
     "test_detector_spectrum_matches_the_oracle",
     "test_first_order_relativistic_accuracy_against_the_exact_spectrum",
+    "test_fit_recovers_the_truth_from_oracle_data",
+    "test_fit_uncertainty_is_calibrated",
+    "test_fit_uncertainty_matches_the_cramer_rao_bound",
     "test_gradient_average_matches_the_averaged_oracle_spectrum",
     "test_high_z_ion_acoustic_resonance",
     "test_spectral_density_matches_the_oracle",

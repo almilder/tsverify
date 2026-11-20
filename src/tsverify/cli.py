@@ -19,6 +19,7 @@ def _conventions(args):
         spectrum_per=args.spectrum_per,
         dispersion_in_k=not args.vacuum_k,
         absolute=not args.shape_only,
+        per_range_amplitudes=tuple(args.per_range_amplitudes),
     )
 
 
@@ -67,6 +68,8 @@ def parser():
     c.add_argument("--spectrum-per", choices=PER, default="wavelength")
     c.add_argument("--vacuum-k", action="store_true", help="the code uses vacuum wavenumbers omega/c")
     c.add_argument("--shape-only", action="store_true", help="the code's spectra are not in absolute units")
+    c.add_argument("--per-range-amplitudes", action="append", default=[], metavar="CHANNEL",
+                   help="the code's fits on this channel (EPW or IAW) use one amplitude per fit range; repeatable")
     e.set_defaults(func=_export)
 
     s = sub.add_parser("score", help="score a code's outputs in a bundle and write the report")

@@ -24,13 +24,21 @@ from .adapter import NotSupported
 from .conventions import Conventions
 from .instrument import Detector
 from .oracle import GaussianComponent, Ion, KappaEDF, Plasma, QuadratureEDF
+from .execute import fit_outputs
+from .fitting import FitProblem, FitResult, is_amplitude
 from .tasks import Context, Task, all_tasks
 from .tolerances import REFERENCE
 from .volume import Aperture, LinearGradient, Volume
 
 FORMATS = ("csv", "json")
 EDF_V = np.linspace(-25.0, 25.0, 5001)
-OUTPUT_COLUMNS = {"zprime": ("re", "im"), "spectral_density": ("S",), "detector_spectrum": ("pixel_center_nm", "value")}
+OUTPUT_COLUMNS = {
+    "zprime": ("re", "im"),
+    "spectral_density": ("S",),
+    "detector_spectrum": ("pixel_center_nm", "value"),
+    "fit": ("parameter", "estimate"),
+}
+PYTHON_ONLY = "needs the code's own detector spectrum as its data, so it runs on the Python route only"
 MAXWELLIAN = (GaussianComponent(),)
 
 
@@ -149,13 +157,25 @@ def _write_detector_csv(folder, det: Detector):
     _write_csv(folder / "amp_ranges.csv", ("low", "high"), det.amp_ranges)
 
 
-def _input_record(run, plasma):
+def _start_value(problem, plasma, name):
+    from .fitting import value_of
+
+    return float(value_of(dataclasses.replace(problem.start, plasma=plasma), problem.start_amplitudes, name))
+
+
+def _input_record(run, plasma, problem=None):
     record = {"kind": run.kind}
     if run.kind == "zprime":
         record["zeta"] = run.zeta.tolist()
     elif run.kind == "spectral_density":
         record["plasma"] = plasma_record(plasma)
         record["wavelengths_nm"] = run.wavelengths_nm.tolist()
+    elif run.kind == "fit":
+        record["start"] = plasma_record(plasma)
+        record["detector"] = _detector_record(problem.detector)
+        record["data"] = {"pixel_center_nm": problem.centers.tolist(), "value": problem.data.tolist(),
+                          "variance": problem.variance.tolist(), "fit": problem.mask.astype(int).tolist()}
+        record["free"] = [{"parameter": n, "start": _start_value(problem, plasma, n)} for n in problem.free]
     else:
         v = run.volume
         record["volume"] = {
@@ -174,6 +194,14 @@ def _expected(context, task, name, run):
     if run.kind == "zprime":
         z = oracle.plasma_dispersion_derivative(run.zeta)
         return ("zeta", "re", "im"), (run.zeta, z.real, z.imag)
+    if run.kind == "fit":
+        from .fitting import value_of
+
+        problem = run.problem(context.conventions, {})
+        truth = dataclasses.replace(run.volume, plasma=context.conventions.express(run.volume.plasma))
+        amplitudes = dict.fromkeys(problem.start_amplitudes, run.detector.amplitude)
+        values = [float(value_of(truth, amplitudes, n)) for n in problem.free]
+        return ("parameter", "truth"), (list(problem.free), values)
     if run.kind == "spectral_density":
         options = context.conventions.oracle_options()
         return ("wavelength_nm", "S"), (run.wavelengths_nm, oracle.spectral_density(run.wavelengths_nm, run.plasma, **options))
@@ -194,6 +222,8 @@ def export(bundle, conventions: Conventions = Conventions(), *, slow=False, form
                 "formats": list(formats), "tasks": [], "runs": []}
     for task in all_tasks(slow=slow):
         reason = task.not_applicable(conventions)
+        if not reason and any(run.needs for run in task.runs.values()):
+            reason = PYTHON_ONLY
         ids = run_ids(task)
         manifest["tasks"].append({"task": task.id, "test": task.test, "level": task.level,
                                   "runs": [] if reason else list(ids.values()), "not_applicable": reason})
@@ -202,16 +232,27 @@ def export(bundle, conventions: Conventions = Conventions(), *, slow=False, form
         for name, run in task.runs.items():
             folder = bundle / "runs" / ids[name]
             folder.mkdir(parents=True, exist_ok=True)
-            plasma = run.plasma if run.kind == "spectral_density" else (run.volume.plasma if run.volume else None)
+            problem = run.problem(conventions, {}) if run.kind == "fit" else None
+            if problem is not None:
+                plasma = problem.start.plasma
+            else:
+                plasma = run.plasma if run.kind == "spectral_density" else (run.volume.plasma if run.volume else None)
             expressed = conventions.express(plasma) if plasma is not None else None
             if "json" in formats:
-                (folder / "input.json").write_text(json.dumps(_input_record(run, expressed)), encoding="utf-8")
+                (folder / "input.json").write_text(json.dumps(_input_record(run, expressed, problem)), encoding="utf-8")
             if "csv" in formats:
                 if run.kind == "zprime":
                     _write_csv(folder / "zeta.csv", ("zeta",), ((z,) for z in run.zeta))
                 elif run.kind == "spectral_density":
                     _write_plasma_csv(folder, expressed)
                     _write_csv(folder / "wavelengths.csv", ("wavelength_nm",), ((x,) for x in run.wavelengths_nm))
+                elif run.kind == "fit":
+                    _write_plasma_csv(folder, expressed)
+                    _write_detector_csv(folder, problem.detector)
+                    _write_csv(folder / "data.csv", ("pixel_center_nm", "value", "variance", "fit"),
+                               zip(problem.centers, problem.data, problem.variance, problem.mask.astype(int)))
+                    _write_csv(folder / "free.csv", ("parameter", "start"),
+                               [(n, _start_value(problem, expressed, n)) for n in problem.free])
                 else:
                     _write_plasma_csv(folder, expressed)
                     _write_detector_csv(folder, run.detector)
@@ -313,6 +354,8 @@ def read_inputs(folder, kind, fmt="csv"):
     """A run's inputs as the code would read them: ``{"zeta"}``, ``{"plasma", "wavelengths_nm"}`` or
     ``{"volume", "detector"}`` (the plasma written in the code's conventions)."""
     folder = Path(folder)
+    if kind == "fit":
+        return {"problem": _read_problem(folder, fmt)}
     if fmt == "json":
         r = json.loads((folder / "input.json").read_text(encoding="utf-8"))
         if kind == "zprime":
@@ -329,12 +372,6 @@ def read_inputs(folder, kind, fmt="csv"):
     plasma = _plasma_from_csv(folder)
     if kind == "spectral_density":
         return {"plasma": plasma, "wavelengths_nm": _columns(folder / "wavelengths.csv")["wavelength_nm"]}
-    d = _records(folder / "detector.csv")[0]
-    notch = tuple(_number(d[k]) for k in ("notch_center", "notch_width", "notch_od"))
-    record = {"channel": d["channel"], "lam_range": (_number(d["lam_min"]), _number(d["lam_max"])),
-              "pixels": int(d["pixels"]), "points_per_pixel": int(d["points_per_pixel"]), "sigma": _number(d["sigma"]),
-              "amplitude": _number(d["amplitude"]), "notch": None if np.isnan(notch[0]) else notch}
-    a = _columns(folder / "amp_ranges.csv")
     gradient = aperture = None
     if (folder / "gradient.csv").exists():
         g = _records(folder / "gradient.csv")[0]
@@ -342,7 +379,36 @@ def read_inputs(folder, kind, fmt="csv"):
     if (folder / "aperture.csv").exists():
         ap = _columns(folder / "aperture.csv")
         aperture = Aperture(tuple(ap["angle_deg"].tolist()), tuple(ap["weight"].tolist()))
-    return {"volume": Volume(plasma, gradient, aperture), "detector": _detector_from(record, zip(a["low"], a["high"]))}
+    return {"volume": Volume(plasma, gradient, aperture), "detector": _detector_csv(folder)}
+
+
+def _detector_csv(folder):
+    d = _records(folder / "detector.csv")[0]
+    notch = tuple(_number(d[k]) for k in ("notch_center", "notch_width", "notch_od"))
+    record = {"channel": d["channel"], "lam_range": (_number(d["lam_min"]), _number(d["lam_max"])),
+              "pixels": int(d["pixels"]), "points_per_pixel": int(d["points_per_pixel"]), "sigma": _number(d["sigma"]),
+              "amplitude": _number(d["amplitude"]), "notch": None if np.isnan(notch[0]) else notch}
+    a = _columns(folder / "amp_ranges.csv")
+    return _detector_from(record, zip(a["low"], a["high"]))
+
+
+def _read_problem(folder, fmt):
+    """A fit problem as the code reads it: the start plasma in its conventions."""
+    if fmt == "json":
+        r = json.loads((folder / "input.json").read_text(encoding="utf-8"))
+        start = _plasma_from_record(r["start"])
+        det = _detector_from(r["detector"], r["detector"]["amp_ranges"])
+        d = r["data"]
+        values, variance, mask = np.array(d["value"]), np.array(d["variance"]), np.array(d["fit"]) == 1
+        starts = {f["parameter"]: float(f["start"]) for f in r["free"]}
+    else:
+        start = _plasma_from_csv(folder)
+        det = _detector_csv(folder)
+        d = _columns(folder / "data.csv")
+        values, variance, mask = d["value"], d["variance"], d["fit"] == 1
+        starts = {row["parameter"]: float(row["start"]) for row in _records(folder / "free.csv")}
+    amplitudes = {k: v for k, v in starts.items() if is_amplitude(k)}
+    return FitProblem(Volume(start), amplitudes, det, values, variance, mask, tuple(starts))
 
 
 def read_output(folder, kind):
@@ -351,6 +417,8 @@ def read_output(folder, kind):
     csv_path, json_path = folder / "output.csv", folder / "output.json"
     if csv_path.exists() and json_path.exists():
         raise BundleError(f"{folder} has both output.csv and output.json; keep one")
+    if kind == "fit":
+        return _read_fit_output(folder, csv_path, json_path)
     if csv_path.exists():
         data = _columns(csv_path)
     elif json_path.exists():
@@ -367,8 +435,36 @@ def read_output(folder, kind):
     return data["pixel_center_nm"], data["value"]
 
 
+def _read_fit_output(folder, csv_path, json_path):
+    if csv_path.exists():
+        header, rows = _read_csv(csv_path)
+        if "parameter" not in header or "estimate" not in header:
+            raise BundleError(f"{folder}: a fit output needs the columns parameter, estimate (and optionally sigma)")
+        records = [dict(zip(header, row)) for row in rows]
+        estimates = {r["parameter"]: float(r["estimate"]) for r in records}
+        sigma = [r.get("sigma", "") for r in records]
+        has_sigmas = "sigma" in header and all(x not in ("", "NaN", "nan") for x in sigma)
+        sigmas = {r["parameter"]: float(r["sigma"]) for r in records} if has_sigmas else None
+        return FitResult(estimates, sigmas)
+    if json_path.exists():
+        r = json.loads(json_path.read_text(encoding="utf-8"))
+        return FitResult({k: float(v) for k, v in r["estimates"].items()},
+                         {k: float(v) for k, v in r["sigmas"].items()} if r.get("sigmas") else None)
+    return None
+
+
 def write_output(folder, kind, value, fmt="csv"):
     folder = Path(folder)
+    if kind == "fit":
+        names = list(value.estimates)
+        sigmas = value.sigmas or {}
+        if fmt == "json":
+            payload = {"estimates": value.estimates, "sigmas": value.sigmas}
+            (folder / "output.json").write_text(json.dumps(payload), encoding="utf-8")
+        else:
+            _write_csv(folder / "output.csv", ("parameter", "estimate", "sigma"),
+                       [(n, value.estimates[n], sigmas.get(n, float("nan"))) for n in names])
+        return
     if kind == "zprime":
         columns = {"re": np.real(value), "im": np.imag(value)}
     elif kind == "spectral_density":
@@ -417,6 +513,8 @@ def respond(bundle, adapter, *, outputs=None, fmt="csv"):
                     value = adapter.zprime(inputs["zeta"])
                 elif run.kind == "spectral_density":
                     value = adapter.spectral_density(inputs["plasma"], inputs["wavelengths_nm"])
+                elif run.kind == "fit":
+                    value = adapter.fit(inputs["problem"])
                 else:
                     value = adapter.detector_spectrum(inputs["volume"], inputs["detector"])
             except NotSupported:
@@ -455,6 +553,14 @@ def score(bundle, *, outputs=None, name="code"):
         if bad:
             results.append(dataclasses.replace(task.unsupported(""), status="failed", message=f"{task.id}: {bad}"))
             continue
+        try:
+            for n, run in task.runs.items():
+                if run.kind == "fit":
+                    outputs_ |= fit_outputs(n, run.problem(conventions, {}), outputs_[n], conventions)
+        except KeyError as key:
+            results.append(dataclasses.replace(task.unsupported(""), status="failed",
+                                               message=f"{task.id}: the fit returned no estimate for {key}"))
+            continue
         results.append(task.result(context, outputs_))
     meta = Meta(code=name, route=f"file exchange ({Path(bundle).name})", conventions=conventions)
     return results, meta
@@ -463,6 +569,8 @@ def score(bundle, *, outputs=None, name="code"):
 def _shape_problem(task, outputs):
     for n, run in task.runs.items():
         value = outputs[n]
+        if run.kind == "fit":
+            continue
         if run.kind == "zprime":
             expected, got = run.zeta.size, np.size(value)
         elif run.kind == "spectral_density":
@@ -500,6 +608,7 @@ along k, angles in degrees, wavelengths in nm. EDF velocities are in units of sq
 | `zprime` | `zeta.csv` (column `zeta`): real arguments of Z'(zeta) = -2 [1 + zeta Z(zeta)] |
 | `spectral_density` | `plasma.csv`, `ions.csv`, `wavelengths.csv` (column `wavelength_nm`) |
 | `detector_spectrum` | `plasma.csv`, `ions.csv`, `detector.csv`, `amp_ranges.csv`, optional `gradient.csv`, `aperture.csv` |
+| `fit` | `plasma.csv`, `ions.csv` (the start), `detector.csv`, `amp_ranges.csv`, `data.csv`, `free.csv` |
 
 - `plasma.csv` (one row): `ne, Te, angle_deg, lam, ud, electron_edf, electron_kappa`. `electron_edf` is `maxwellian`,
   `mixture` (Gaussian components in `electron_components.csv`: `weight, shift, width`) or `kappa`
@@ -514,6 +623,14 @@ along k, angles in degrees, wavelengths in nm. EDF velocities are in units of sq
   sampled at `points` equal-weight points with scales `linspace(1 - p/200, 1 + p/200, points)`.
 - `aperture.csv`: `angle_deg, weight`. The spectrum is the weighted sum over these scattering angles.
 
+- `data.csv` (fit runs): `pixel_center_nm, value, variance, fit`. Minimize the sum over the pixels with `fit = 1`
+  of `(value - model)^2 / variance`. The model is the detector spectrum scaled so its maximum inside the
+  `amp_ranges.csv` ranges is the free `amplitude` (or, per fit range, `amplitude<k>`).
+- `free.csv` (fit runs): `parameter, start`. The parameters to fit and their start values; every other parameter
+  stays at its value in `plasma.csv` and `ions.csv`. Names: `ne`, `Te`, `ud`, `ion<k>.Ti`, `ion<k>.Va`,
+  `ion<k>.fract` (k from 1), and `amplitude`, or `amplitude1`, `amplitude2`, ... (one per fit range, each
+  scaling the pixels of its range) for a code exported with `--per-range-amplitudes <channel>`.
+
 `input.json` holds the same inputs in one file.
 
 ## Outputs
@@ -523,8 +640,11 @@ along k, angles in degrees, wavelengths in nm. EDF velocities are in units of sq
 | `zprime` | `re, im` (one row per zeta) |
 | `spectral_density` | `S` (one row per wavelength; `wavelength_nm` may be included) |
 | `detector_spectrum` | `pixel_center_nm, value` (one row per pixel) |
+| `fit` | `parameter, estimate, sigma` (one row per free parameter; leave `sigma` empty if the code has none) |
 
-Or `output.json` with the same names as keys and arrays as values. Write full precision (17 significant digits).
+Or `output.json` with the same names as keys and arrays as values (for a fit: `{{"estimates": {{...}}, "sigmas": {{...}}}}`).
+Write full precision (17 significant digits).
 
-`expected.csv` in each folder is the oracle's answer for that run, reported in your conventions.
+`expected.csv` in each folder is the oracle's answer for that run, reported in your conventions; for a fit, the
+true parameter values.
 """

@@ -13,6 +13,7 @@ from .. import oracle
 from ..adapter import FEATURES, Adapter
 from ..compare import oracle_detector
 from ..conventions import CANONICAL
+from ..fitting import least_squares_fit
 from ..volume import spectral_density
 
 UNKNOWN_SCALE = 3.7
@@ -33,6 +34,9 @@ class OracleAdapter(Adapter):
         actual = self.behaves_as
         spectrum = oracle.spectral_density(wavelengths_nm, actual.interpret(plasma), **actual.oracle_options())
         return spectrum if actual.absolute else UNKNOWN_SCALE * spectrum
+
+    def fit(self, problem):
+        return least_squares_fit(lambda volume: self.detector_spectrum(volume, problem.detector)[1], problem)
 
     def detector_spectrum(self, volume, detector):
         actual = self.behaves_as

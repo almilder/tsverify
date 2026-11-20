@@ -9,9 +9,9 @@ physics it shares no code with: the Debye–Hückel sum rule, the kinetic Bohm�
 Selden's relativistic tables, and the Faddeeva function.
 
 It started as the physics test suite of [tsadar](https://github.com/ergodicio/tsadar) and is being
-extracted into a code-independent package. **Status: pre-release (0.5).** It contains the oracle, its
-self-tests, the case catalog, and conformance tests at the Z′ (L1), spectrum (L2) and detector (L3) depths
-that any Python-callable code can run through an adapter. Each code declares its own conventions. When a test
+extracted into a code-independent package. **Status: pre-release (0.6).** It contains the oracle, its
+self-tests, the case catalog, and conformance tests at the Z′ (L1), spectrum (L2), detector (L3) and fitting
+(L4) depths that any code can run, through a Python adapter or by exchanging files. Each code declares its own conventions. When a test
 fails, tsverify names the convention mismatch or known defect that explains it, or says that none does.
 
 ## Install and check the oracle
@@ -49,6 +49,10 @@ class MyCodeAdapter(Adapter):
     def detector_spectrum(self, volume, detector):
         """L3: (pixel_centers_nm, values) of ``volume`` on ``detector``, normalized so the maximum inside
         detector.amp_ranges is detector.amplitude."""
+        ...
+
+    def fit(self, problem):
+        """L4: fit problem.data (a tsverify.fitting.FitProblem) and return a tsverify.fitting.FitResult."""
         ...
 ```
 
@@ -91,7 +95,11 @@ tsverify score bundle --name mycode --report report.md --json report.json
   `spectral_density` or `detector_spectrum`), their folder, and the features they need.
 - A run your code skips is reported as not supported.
 - Plasmas are written in your code's conventions: pass them to `export` (`--flow-sign -1`,
-  `--electron-drift lab`, `--relativistic none`, `--spectrum-per frequency`, `--vacuum-k`, `--shape-only`).
+  `--electron-drift lab`, `--relativistic none`, `--spectrum-per frequency`, `--vacuum-k`, `--shape-only`,
+  `--per-range-amplitudes EPW`).
+- Fits are runs too: each fit folder has the data, its variance and the free parameters, and the code writes
+  `parameter, estimate, sigma`. The `self` Cramér–Rao test needs the code's own spectrum fed back as data, so
+  it runs on the Python route only.
 - `--slow` adds the A1 sweep.
 - `expected.csv` in each run folder is the oracle's answer, which is handy for plotting.
 
@@ -114,6 +122,26 @@ self-tests check this for every test, with the toy code's defects included.
 
 The JSON form carries the same content for scripts.
 
+### Fitting (L4)
+
+A fit problem hands the code a detector spectrum in counts (peak 1e4), the noise variance of each pixel, the
+pixels to fit, the free parameters and their start values. Every other parameter is at its true value. The
+code minimizes Σ (data − model)²/variance however it likes, and returns its estimates and, if it has them,
+their one-σ uncertainties. The model is the L3 spectrum times free amplitudes: one overall amplitude by
+default, or one per fit range on the channels a code declares (`Conventions(per_range_amplitudes=("EPW",))`,
+for codes that fit the blue and red wings with separate gains, as tsadar does).
+
+| Test | Data | Check |
+|---|---|---|
+| recovery (EPW ne, Te; IAW Va, Ti) | noiseless oracle spectrum, start displaced (ne −20 %, Te +30 %, Va −2, Ti +63 %, amplitude −20 %) | every parameter within 1e-3 relative (Va 1e-3 absolute) |
+| σ against the Cramér–Rao bound, `self` | the code's own noiseless spectrum (needs L3; Python route only) | σ within 1 % of the bound from the oracle's Jacobian |
+| σ against the Cramér–Rao bound, `oracle` | the noiseless oracle spectrum | σ within 5 % of the bound |
+| calibration (`slow`) | 32 seeded realizations of counting noise | the pulls (estimate − noiseless estimate)/σ have mean 0 and width 1 within their 3σ sampling bands; 1σ and 2σ coverage are reported |
+
+A σ that is off the bound by √2 or 2 for every parameter is named as a loss-normalization slip (the Hessian
+of χ² against that of −ln L = χ²/2). `tsverify.fitting.least_squares_fit` is a reference weighted
+least-squares fitter for a Python code that has an L3 model but no fitter of its own.
+
 ### Conventions
 
 Codes differ in how they write inputs and report outputs. tsverify's plasma description is canonical:
@@ -130,6 +158,7 @@ code reports it.
 | `spectrum_per` | `"wavelength"` or `"frequency"` (L2 output; L3 is always integrated over wavelength) |
 | `dispersion_in_k` | `True`: k_s, k_i include the plasma dispersion; `False`: vacuum ω/c |
 | `absolute` | `True`: L2 in the oracle's absolute units; `False`: L2 compared as a shape |
+| `per_range_amplitudes` | `()`: L4 fits use one amplitude; `("EPW",)`: one per fit range on the EPW channel |
 
 The **convention probes** are four small asymmetric plasmas: an ion flow, an electron drift, a drift with
 flowing ions, and broad EPW wings. When a code fails a probe, the probe retries every single-convention
@@ -177,6 +206,8 @@ Physical constants are the CODATA 2022 values from NIST (https://physics.nist.go
 - `tsverify.signatures`: the known-defect signatures and the explanations of a failure.
 - `tsverify.adapters`: the oracle, PlasmaPy and toy adapters.
 - `tsverify.tasks`: every check as runs plus a scoring function, shared by both routes.
+- `tsverify.fitting`: the fit problem and result, parameter names, the Cramér–Rao bound and the reference
+  fitter.
 - `tsverify.exchange`, `tsverify.report` and the `tsverify` command: the file route and the reports.
 - `tsverify.instrument.Detector`: a spectrometer channel (pixel axis, Gaussian IRF, fit ranges, notch, peak
   windows).

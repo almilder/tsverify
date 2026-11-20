@@ -43,11 +43,18 @@ def _same(a, b):
 @pytest.mark.parametrize("fmt", exchange.FORMATS)
 def test_inputs_read_back_exactly_in_the_code_s_conventions(different, fmt):
     for task in all_tasks(slow=False):
-        if task.not_applicable(EVERYTHING_DIFFERENT):
+        if task.not_applicable(EVERYTHING_DIFFERENT) or any(run.needs for run in task.runs.values()):
             continue
         for name, run in task.runs.items():
             inputs = exchange.read_inputs(different / "runs" / exchange.run_ids(task)[name], run.kind, fmt)
-            if run.kind == "zprime":
+            if run.kind == "fit":
+                problem, read = run.problem(EVERYTHING_DIFFERENT, {}), inputs["problem"]
+                assert read.start.plasma == EVERYTHING_DIFFERENT.express(problem.start.plasma), task.id
+                assert read.detector == dataclasses.replace(problem.detector, peak_windows=()), task.id
+                assert read.free == problem.free and read.start_amplitudes == problem.start_amplitudes, task.id
+                for field in ("data", "variance", "mask"):
+                    assert _same(getattr(read, field), getattr(problem, field)), (task.id, field)
+            elif run.kind == "zprime":
                 assert _same(inputs["zeta"], run.zeta)
             elif run.kind == "spectral_density":
                 assert inputs["plasma"] == EVERYTHING_DIFFERENT.express(run.plasma), task.id
@@ -76,6 +83,9 @@ def test_the_file_route_scores_exactly_like_the_python_route(request, tmp_path, 
     for task in all_tasks(slow=False):
         direct = python_route(adapter, task)
         via_files = files[task.id]
+        if any(run.needs for run in task.runs.values()):
+            assert via_files.status == "not supported" and exchange.PYTHON_ONLY in via_files.message, task.id
+            continue
         assert via_files.status == direct.status, task.id
         assert via_files.measurements == direct.measurements, task.id
         if direct.status != "not supported":

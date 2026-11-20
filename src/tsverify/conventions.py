@@ -26,7 +26,9 @@ class Conventions:
     electron fluid velocity). ``relativistic``: ``"first_order"`` (the ``1 + 2 omega/omega_L`` factor) or
     ``"none"``. ``spectrum_per``: L2 output per unit ``"wavelength"`` or ``"frequency"``. ``dispersion_in_k``:
     plasma dispersion in the scattered and incident wavenumbers. ``absolute``: L2 output in the oracle's
-    absolute units; if False, L2 is compared as a shape (best least-squares scale)."""
+    absolute units; if False, L2 is compared as a shape (best least-squares scale). ``per_range_amplitudes``: the
+    detector channels on which the code's fits use one amplitude per fit range instead of one overall amplitude
+    (L4)."""
 
     flow_sign: int = 1
     electron_drift: str = "ion_frame"
@@ -34,8 +36,10 @@ class Conventions:
     spectrum_per: str = "wavelength"
     dispersion_in_k: bool = True
     absolute: bool = True
+    per_range_amplitudes: tuple = ()
 
     def __post_init__(self):
+        object.__setattr__(self, "per_range_amplitudes", tuple(self.per_range_amplitudes))
         if self.flow_sign not in (1, -1):
             raise ValueError(f"flow_sign must be +1 or -1, got {self.flow_sign!r}")
         for name, allowed in (
@@ -77,6 +81,12 @@ class Conventions:
     def detector_options(self):
         """The same for the spectrum behind an L3 detector spectrum, which is always integrated over wavelength."""
         return {"relativistic": self.relativistic, "dispersion_in_k": self.dispersion_in_k}
+
+    def amplitude_names(self, det):
+        """The free amplitudes of an L4 fit on ``det``."""
+        from .fitting import amplitude_names
+
+        return amplitude_names(det, det.channel in self.per_range_amplitudes)
 
     def alternatives(self):
         """``(description, conventions)`` for every single-field change from these conventions."""
@@ -120,4 +130,4 @@ def _ion_fluid_velocity(plasma: Plasma):
 
 
 CANONICAL = Conventions()
-TSADAR = CANONICAL
+TSADAR = Conventions(per_range_amplitudes=("EPW",))

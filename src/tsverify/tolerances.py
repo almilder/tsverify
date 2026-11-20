@@ -19,6 +19,10 @@ class Tolerances:
     sweep_linf: float = 2.0e-3
     relativistic_shape: float = 3.0
     relativistic_peak: float = 1.2
+    fit_rtol: float = 1.0e-3
+    fit_atol: dict = field(default_factory=lambda: {"Va": 1.0e-3, "ud": 1.0e-2})
+    cramer_rao_self: float = 0.01
+    cramer_rao_oracle: float = 0.05
     zero_gradient: float = 1.0e-12
     rewritten_plasma: float = 1.0e-10
 

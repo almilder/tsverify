@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+Fitting tests (L4), with tsadar as the first fitting code (Phase 6).
+
+- L4 `Adapter.fit(problem) -> FitResult`, through `tsverify.fitting`.
+  - A `FitProblem` gives the code a detector spectrum in counts (peak 1e4), the variance of each pixel, the pixels
+    to fit, the free parameters and their start values. Everything else is at its true value.
+  - The code minimizes Σ (data − model)²/variance in its own way, and returns estimates and, optionally, σ.
+  - The model is the L3 spectrum times free amplitudes: one overall amplitude, or one per fit range on the
+    channels a code declares with the new convention `per_range_amplitudes` (CLI `--per-range-amplitudes`).
+  - `TSADAR` declares per-range amplitudes on the EPW channel (tsadar's `amp1` and `amp2`), so it is no longer
+    identical to `CANONICAL`.
+- Tests on the EPW (ne, Te) and IAW (Va, Ti) problems:
+  - `test_fit_recovers_the_truth_from_oracle_data`: noiseless oracle data from displaced starts. Every
+    parameter must land within 1e-3 relative (Va 1e-3 absolute).
+  - `test_fit_uncertainty_matches_the_cramer_rao_bound`: σ against the bound from the oracle's Jacobian, with the
+    amplitudes marginalized.
+    - `self`: the code's own noiseless spectrum as data, to 1 %. It needs L3, and runs on the Python route only.
+    - `oracle`: oracle data, to 5 %.
+  - `test_fit_uncertainty_is_calibrated` (`slow`): 32 seeded realizations of counting noise. The pulls
+    (estimate − noiseless estimate)/σ must have mean 0 and width 1 within their 3σ sampling bands (±0.53 and
+    ±0.38). 1σ and 2σ coverage are reported.
+  - A failure names a σ off by √2 or 2 everywhere (loss normalization), pulls that are too wide (the fit
+    objective is not the likelihood its σ comes from), and pulls that are too narrow (σ overestimated, or the
+    fit stops near its start).
+- `fitting.least_squares_fit`: a reference weighted least-squares fitter for Python codes with an L3 model.
+  `OracleAdapter` uses it: recovery to roundoff (about 1e-15 relative), σ equal to the bound, and calibration
+  pulls 1.01–1.20 wide.
+- File route: fit runs export `data.csv` (pixel centre, value, variance, fit flag) and `free.csv` (parameter,
+  start). The code writes `parameter, estimate, sigma`.
+- Report: an L4 section. The pytest wrappers record every estimate, σ ratio and pull statistic.
+- CI runs the slow tests (sweep and calibration) against the oracle on Python 3.13 only.
+- tsadar (`TsadarAdapter.fit`: its deck, L-BFGS-B on its default `l2` loss, and Laplace σ):
+  - Recovery passes, every parameter within 0.21 of its allowed error.
+  - The Cramér–Rao bound is met to 5e-4 (self) and 2.6e-3 (oracle).
+  - **Calibration fails with the default `l2` loss.** The pulls are 1.19–1.44 wide, against 1.01–1.20 for the
+    oracle on the same realizations. That objective weights every pixel equally, while the Laplace σ comes from the
+    Poisson-weighted Hessian, so the σ describes an efficient estimator that the fit is not.
+  - With `loss_method: poisson` the calibration passes, but with pulls 0.72–0.85 wide. That is narrower than any
+    unbiased estimator can be, which suggests the L-BFGS-B fits stop before they converge.
+  - tsadar's S1 and S2 tests are replaced by these; S3 (MCMC against Laplace) stays in tsadar.
+  - With the amplitudes free, tsadar's oracle-data σ is within 0.3 % of the bound with either the CODATA or the
+    old rounded constants. So the 8–15 % shift PR 164 saw under a fixed normalization did not come from the
+    constants.
+  - Gate (branch `tsverify-phase6`): 143 → 146 passed. The 3 removed tests are S1 ×2 and S2, the 6 new ones
+    are L4. There are no state changes, and all 182 other recorded values are identical.
+
 ## 0.5.0 (2026-11-20)
 
 File exchange, a command-line tool and reports (Phase 5).
