@@ -9,7 +9,7 @@ physics it shares no code with: the Debye–Hückel sum rule, the kinetic Bohm�
 Selden's relativistic tables, and the Faddeeva function.
 
 It started as the physics test suite of [tsadar](https://github.com/ergodicio/tsadar) and is being
-extracted into a code-independent package. **Status: pre-release (0.4).** It contains the oracle, its
+extracted into a code-independent package. **Status: pre-release (0.5).** It contains the oracle, its
 self-tests, the case catalog, and conformance tests at the Z′ (L1), spectrum (L2) and detector (L3) depths
 that any Python-callable code can run through an adapter. Each code declares its own conventions. When a test
 fails, tsverify names the convention mismatch or known defect that explains it, or says that none does.
@@ -74,7 +74,45 @@ runs the oracle itself as a code, which checks the tests. Two more adapters ship
 tsadar's adapter is in its `tests/physics/adapter.py`.
 
 To run the tests inside your own suite, put `from tsverify.conformance import *` in a test module and
-provide a `ts_adapter` fixture.
+provide a `ts_adapter` fixture. Add `--ts-report report.md` (and `--ts-report-json report.json`) to either
+command for the conformance report.
+
+## Test a code that is not in Python
+
+Codes in Matlab, Fortran, C++ or IDL exchange files with tsverify instead of writing an adapter:
+
+```
+tsverify export bundle                  # every run's inputs, in CSV and JSON, plus the oracle's answers
+<your code reads bundle/runs/<run>/... and writes output.csv into each run folder>
+tsverify score bundle --name mycode --report report.md --json report.json
+```
+
+- `bundle/README.md` describes every file. `bundle/runs.csv` lists the runs: their kind (`zprime`,
+  `spectral_density` or `detector_spectrum`), their folder, and the features they need.
+- A run your code skips is reported as not supported.
+- Plasmas are written in your code's conventions: pass them to `export` (`--flow-sign -1`,
+  `--electron-drift lab`, `--relativistic none`, `--spectrum-per frequency`, `--vacuum-k`, `--shape-only`).
+- `--slow` adds the A1 sweep.
+- `expected.csv` in each run folder is the oracle's answer, which is handy for plotting.
+
+The file route scores through exactly the same code as the Python route, so both give the same numbers. The
+self-tests check this for every test, with the toy code's defects included.
+`tsverify respond bundle MODULE:CLASS` fills a bundle from a Python adapter.
+
+`examples/matlab/` is a small Maxwellian Thomson code in Matlab that answers a bundle
+(`respond_maxwellian('bundle')`). It passes all 41 tests it supports: Z′ to 2e-15 and spectra to 5e-12.
+
+## The report
+
+`tsverify score` and `pytest --ts-report` write the same report. It contains:
+
+- the declared conventions;
+- a summary for each level;
+- every failure, with the convention or known defect that explains it;
+- a table for each level of the measured errors against their limits;
+- the tests the code does not support, grouped by reason.
+
+The JSON form carries the same content for scripts.
 
 ### Conventions
 
@@ -138,6 +176,8 @@ Physical constants are the CODATA 2022 values from NIST (https://physics.nist.go
 - `tsverify.conventions`: `Conventions`, `CANONICAL` and `TSADAR`.
 - `tsverify.signatures`: the known-defect signatures and the explanations of a failure.
 - `tsverify.adapters`: the oracle, PlasmaPy and toy adapters.
+- `tsverify.tasks`: every check as runs plus a scoring function, shared by both routes.
+- `tsverify.exchange`, `tsverify.report` and the `tsverify` command: the file route and the reports.
 - `tsverify.instrument.Detector`: a spectrometer channel (pixel axis, Gaussian IRF, fit ranges, notch, peak
   windows).
 - `tsverify.selftest`: the oracle against the Debye–Hückel sum rule, the kinetic Bohm–Gross and

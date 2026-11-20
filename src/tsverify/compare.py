@@ -43,17 +43,31 @@ def compared_pixels(det, centers):
     return mask
 
 
-def assert_detector_matches(label, det, centers, model, expected, tolerances=REFERENCE):
-    """Spectrum (Linf, L1) and peak-position agreement between a code's detector spectrum and the oracle's."""
+def detector_errors(label, det, centers, model, expected, tolerances=REFERENCE):
+    """``(passed, measurements, checks, message)`` for spectrum (Linf, L1) and peak-position agreement between a
+    code's detector spectrum and the oracle's."""
     linf, l1 = oracle.relative_errors(model, expected, compared_pixels(det, centers))
     linf_tol, l1_tol = tolerances.detector_linf[det.channel], tolerances.detector_l1[det.channel]
-    assert linf < linf_tol and l1 < l1_tol, (
-        f"{label}: detector spectrum departs from the analytic one in the fit ranges: "
-        f"Linf={linf:.2e} (tol {linf_tol:.1e}), L1={l1:.2e} (tol {l1_tol:.1e})"
-    )
+    measurements = {"Linf": linf, "L1": l1}
+    checks = [("Linf", linf, linf_tol), ("L1", l1, l1_tol)]
+    if not (linf < linf_tol and l1 < l1_tol):
+        message = (
+            f"{label}: detector spectrum departs from the analytic one in the fit ranges: "
+            f"Linf={linf:.2e} (tol {linf_tol:.1e}), L1={l1:.2e} (tol {l1_tol:.1e})"
+        )
+        return False, measurements, checks, message
     peak_tol = tolerances.peak_nm[det.channel]
     for window in det.peak_windows:
         shift = oracle.peak_wavelength(centers, model, window) - oracle.peak_wavelength(centers, expected, window)
-        assert abs(shift) < peak_tol, (
-            f"{label}: the detector moved the peak in {window} nm by {shift:+.4f} nm (tol {peak_tol:.0e} nm)"
-        )
+        measurements[f"peak shift in {window} nm"] = float(shift)
+        checks.append((f"peak shift in {window} nm", abs(float(shift)), peak_tol))
+        if not abs(shift) < peak_tol:
+            message = f"{label}: the detector moved the peak in {window} nm by {shift:+.4f} nm (tol {peak_tol:.0e} nm)"
+            return False, measurements, checks, message
+    return True, measurements, checks, ""
+
+
+def assert_detector_matches(label, det, centers, model, expected, tolerances=REFERENCE):
+    """Spectrum (Linf, L1) and peak-position agreement between a code's detector spectrum and the oracle's."""
+    passed, _, _, message = detector_errors(label, det, centers, model, expected, tolerances)
+    assert passed, message

@@ -19,7 +19,12 @@ jobs:
       - run: pip install ".[test]"
       - run: pytest --pyargs tsverify.selftest
       - run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.oracle:OracleAdapter
-      - run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.toy:ToyAdapter
+      - run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.toy:ToyAdapter --ts-report report-toy.md
+      - name: File route with the toy code
+        run: |
+          tsverify export bundle --format csv
+          tsverify respond bundle tsverify.adapters.toy:ToyAdapter
+          tsverify score bundle --name toy --report report-files.md
 
   plasmapy:
     runs-on: ubuntu-latest

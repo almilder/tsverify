@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+File exchange, a command-line tool and reports (Phase 5).
+
+- `tsverify.tasks`: every conformance check is now a task. A task lists the runs the code computes (Z′, a
+  spectrum or a detector spectrum) and scores their outputs into a `Result`: status, measurements, the rows for
+  the report, and the message with its diagnosis.
+  - The pytest tests are thin wrappers over the tasks, with the same names, parameters and recorded values.
+    Oracle, toy and PlasmaPy: 84 tests each, no state changes, every recorded value bit-identical.
+  - L3 and A10 now record their measurements too.
+- `tsverify.exchange` and the `tsverify` command (file route):
+  - `tsverify export BUNDLE` writes every run's inputs in the code's declared conventions (`--flow-sign`,
+    `--electron-drift`, `--relativistic`, `--spectrum-per`, `--vacuum-k`, `--shape-only`), as CSV and/or JSON,
+    with the oracle's answer for each run and a README that describes every file. `--slow` adds the sweep.
+  - The code writes `output.csv` or `output.json` into each run folder it supports.
+  - `tsverify score BUNDLE --report report.md --json report.json` scores those outputs through the same tasks.
+    A missing output counts as not supported; an output of the wrong length fails.
+  - A bundle is scored only by the tsverify version that exported it.
+  - `tsverify respond BUNDLE MODULE:CLASS` fills a bundle from a Python adapter.
+  - Floats are written with `repr`, so every input reads back exactly.
+- `tsverify.report`: a Markdown and JSON report, written by both routes (`tsverify score`, `pytest --ts-report`
+  and `--ts-report-json`). It holds the conventions, a summary per level, the failures with their diagnoses, the
+  measured errors against their limits, and the unsupported tests grouped by reason.
+- `examples/matlab/`: a Maxwellian Thomson code in Matlab, with Weideman's Faddeeva expansion, that answers a
+  bundle. Under Matlab R2023b it passes all 41 tests it supports: Z′ to 2.3e-15, spectra to 5.3e-12.
+- Self-tests (67), including:
+  - inputs read back exactly from CSV and JSON under all-different conventions;
+  - the file route gives the same status, measurements and message as the Python route for every task, for the
+    oracle under all-different conventions, the toy code, and two toy defects;
+  - malformed and missing outputs, the version check, and the command line.
+- CI runs the file route with the toy code. A new `bundle` workflow attaches the canonical CSV and JSON bundles
+  to each tagged release.
+- Gate against tsadar (branch `tsverify-phase5`, with tsadar on CODATA constants as in #171):
+  - pytest route: 143 → 143 passed, no state changes. 113 values identical, plus 75 new detector measurements.
+  - File route: `TsadarAdapter` answers all 87 runs, and all 84 tasks pass. All 177 measurements and every status
+    are identical to the pytest route.
+  - tsadar's legacy-Z′ test now scores through `tsverify.execute`, so its deliberate failure stays out of the
+    report.
+
 ## 0.4.0 (2026-11-20)
 
 Known-defect signatures, an L1 Z′ level, and two more codes under test: PlasmaPy and a toy code with planted
