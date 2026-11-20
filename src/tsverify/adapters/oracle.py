@@ -26,6 +26,9 @@ class OracleAdapter(Adapter):
         self.conventions = conventions
         self.behaves_as = behaves_as or conventions
 
+    def zprime(self, zeta):
+        return oracle.plasma_dispersion_derivative(zeta)
+
     def spectral_density(self, plasma, wavelengths_nm):
         actual = self.behaves_as
         spectrum = oracle.spectral_density(wavelengths_nm, actual.interpret(plasma), **actual.oracle_options())

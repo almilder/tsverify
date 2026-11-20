@@ -138,3 +138,9 @@ def mixture_density(x, components):
     for c in components:
         f = f + c.weight * np.exp(-0.5 * ((x - c.shift) / c.width) ** 2) / (c.width * np.sqrt(2.0 * np.pi))
     return f
+
+
+def plasma_dispersion_derivative(zeta):
+    r"""``Z'(zeta) = -2 [1 + zeta Z(zeta)]``."""
+    zeta = np.asarray(zeta)
+    return -2.0 * (1.0 + zeta * plasma_dispersion(zeta))

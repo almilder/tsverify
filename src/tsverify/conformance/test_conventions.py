@@ -1,7 +1,8 @@
 """Convention probes: small asymmetric plasmas that tell a convention mismatch apart from a physics error.
 
 Each probe compares the code's L2 spectrum with the oracle's under the declared conventions. If it fails, the probe
-retries every single-convention change and names the ones under which the code agrees with the oracle.
+retries every single-convention change and every known defect (:mod:`tsverify.signatures`) and names the ones
+under which the code agrees with the oracle.
 """
 
 from dataclasses import dataclass
@@ -10,7 +11,8 @@ import numpy as np
 import pytest
 
 from ..oracle import Ion, Plasma
-from ._support import expected_spectral_density, spectral_density, spectral_errors
+from ..signatures import explain_spectrum, verdict
+from ._support import expected_spectral_density, spectral_density, spectral_errors, zprime_hint
 
 
 @dataclass(frozen=True)
@@ -47,25 +49,13 @@ def test_convention_probe(ts_adapter, probe, record_property):
     declared = ts_adapter.conventions
     linf_tol, l1_tol = ts_adapter.tolerances.spectral_density["A1"]
 
-    def errors(conventions):
-        modelled = conventions.interpret(declared.express(probe.plasma))
-        return spectral_errors(conventions, model, expected_spectral_density(conventions, modelled, lam))
-
-    linf, l1 = errors(declared)
+    linf, l1 = spectral_errors(declared, model, expected_spectral_density(declared, probe.plasma, lam))
     record_property("Linf under the declared conventions", linf)
     if linf < linf_tol and l1 < l1_tol:
         return
-    explained = []
-    for description, alternative in declared.alternatives():
-        alt_linf, alt_l1 = errors(alternative)
-        if alt_linf < linf_tol and alt_l1 < l1_tol:
-            explained.append(f"{description} [Linf={alt_linf:.1e}]")
-    verdict = (
-        "It agrees with the oracle if " + "; or if ".join(explained) + ", so check the declared conventions."
-        if explained
-        else "No single convention change explains it, so this looks like a physics error, not a convention mismatch."
-    )
+    found = explain_spectrum(declared, probe.plasma, lam, model, lambda a, b: a < linf_tol and b < l1_tol)
     pytest.fail(
         f"probe {probe.name!r} (sensitive to the {probe.sensitive_to}): the spectrum departs from the oracle under "
-        f"the declared conventions (Linf={linf:.1e}, L1={l1:.1e}; tol {linf_tol:.0e}, {l1_tol:.0e}). {verdict}"
+        f"the declared conventions (Linf={linf:.1e}, L1={l1:.1e}; tol {linf_tol:.0e}, {l1_tol:.0e}). "
+        + verdict(*found, otherwise=zprime_hint(ts_adapter))
     )

@@ -77,7 +77,7 @@ def test_canonical_conventions_leave_the_plasma_untouched():
 @pytest.mark.parametrize("case", [c for c in SPECTRUM_CASES if c.problem == "A1"], ids=str)
 def test_a_code_with_other_declared_conventions_passes(case):
     adapter = OracleAdapter(EVERYTHING_DIFFERENT)
-    spectral_conformance(adapter, case, 256)
+    spectral_conformance(adapter, case, 256, _record)
     detector_conformance(adapter, case)
 
 

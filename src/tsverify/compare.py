@@ -1,4 +1,4 @@
-"""Detector-depth comparison of a code's spectrum with the oracle's."""
+"""Comparison of a code's spectra with the oracle's, at the spectrum (L2) and detector (L3) depths."""
 
 import numpy as np
 
@@ -6,6 +6,22 @@ from . import oracle
 from .tolerances import REFERENCE
 
 NOTCH_EDGE_SIGMAS = 2.0
+
+
+def expected_spectral_density(conventions, plasma, wavelengths_nm):
+    """The oracle's spectrum of the canonical ``plasma``, reported the way ``conventions`` say."""
+    return oracle.spectral_density(wavelengths_nm, plasma, **conventions.oracle_options())
+
+
+def spectral_errors(conventions, model, expected, mask=None):
+    """Peak-normalized (Linf, L1) errors; for a code without absolute units, after the best least-squares scale."""
+    model = np.asarray(model, dtype=float)
+    expected = np.asarray(expected, dtype=float)
+    if mask is not None:
+        model, expected = model[mask], expected[mask]
+    if not conventions.absolute:
+        model = model * (np.dot(model, expected) / np.dot(model, model))
+    return oracle.relative_errors(model, expected)
 
 
 def oracle_detector(det, centers, spectrum):

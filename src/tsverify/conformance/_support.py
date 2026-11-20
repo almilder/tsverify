@@ -6,8 +6,9 @@ import dataclasses
 import numpy as np
 import pytest
 
-from .. import oracle, volume as volume_oracle
+from .. import volume as volume_oracle
 from ..adapter import NotSupported, required_features
+from ..compare import expected_spectral_density, spectral_errors  # noqa: F401
 from ..volume import Volume
 
 
@@ -19,6 +20,22 @@ def _require(adapter, level, needed):
         pytest.skip(f"{adapter.name}: not supported: {', '.join(sorted(missing))}")
 
 
+def zprime(adapter, zeta):
+    """The code's Z' at real ``zeta``."""
+    _require(adapter, "zprime", ())
+    try:
+        return np.asarray(adapter.zprime(zeta))
+    except NotSupported as reason:
+        pytest.skip(f"{adapter.name}: not supported: {reason}")
+
+
+def zprime_hint(adapter):
+    """Where to look next when a spectrum fails without a known explanation."""
+    if adapter.supports("zprime"):
+        return " The L1 Z' test shows whether the plasma dispersion function is behind it."
+    return " An adapter zprime(zeta) would let the L1 Z' test check the plasma dispersion function."
+
+
 def spectral_density(adapter, plasma, wavelengths_nm):
     """The code's L2 spectrum of the canonical ``plasma``, as the code reports it."""
     _require(adapter, "spectral_density", required_features(plasma))
@@ -26,22 +43,6 @@ def spectral_density(adapter, plasma, wavelengths_nm):
         return np.asarray(adapter.spectral_density(adapter.conventions.express(plasma), wavelengths_nm))
     except NotSupported as reason:
         pytest.skip(f"{adapter.name}: not supported: {reason}")
-
-
-def expected_spectral_density(conventions, plasma, wavelengths_nm):
-    """The oracle's spectrum of the canonical ``plasma``, reported the way ``conventions`` say."""
-    return oracle.spectral_density(wavelengths_nm, plasma, **conventions.oracle_options())
-
-
-def spectral_errors(conventions, model, expected, mask=None):
-    """Peak-normalized (Linf, L1) errors; for a code without absolute units, after the best least-squares scale."""
-    model = np.asarray(model, dtype=float)
-    expected = np.asarray(expected, dtype=float)
-    if mask is not None:
-        model, expected = model[mask], expected[mask]
-    if not conventions.absolute:
-        model = model * (np.dot(model, expected) / np.dot(model, model))
-    return oracle.relative_errors(model, expected)
 
 
 def detector_spectrum(adapter, volume, detector):

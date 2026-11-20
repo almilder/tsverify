@@ -4,6 +4,8 @@ Each level is optional; a code overrides the ones it supports, lists its ``featu
 ``conventions`` (:mod:`tsverify.conventions`; default canonical, which is tsadar's). A test that needs an
 unsupported level or feature is skipped as *not supported*, which is reported apart from a failure.
 
+- L1 ``zprime(zeta) -> Z'``: the derivative of the plasma dispersion function the code uses for Maxwellian
+  species, ``Z'(zeta) = -2 [1 + zeta Z(zeta)]`` at real ``zeta = v / (sqrt(2) v_T)``, as a complex array.
 - L2 ``spectral_density(plasma, wavelengths_nm) -> S``: the spectrum at the given wavelengths, in the oracle's
   units (``tsverify.oracle.spectral_density``) under the declared conventions.
 - L3 ``detector_spectrum(volume, detector) -> (pixel_centers_nm, values)``: pixel values of ``volume`` on
@@ -32,7 +34,7 @@ FEATURES = frozenset(
         "aperture",
     }
 )
-LEVELS = ("spectral_density", "detector_spectrum")
+LEVELS = ("zprime", "spectral_density", "detector_spectrum")
 
 
 class NotSupported(Exception):
@@ -44,6 +46,9 @@ class Adapter:
     features: frozenset = frozenset()
     conventions = CANONICAL
     tolerances = REFERENCE
+
+    def zprime(self, zeta):
+        raise NotSupported("zprime")
 
     def spectral_density(self, plasma, wavelengths_nm):
         raise NotSupported("spectral_density")

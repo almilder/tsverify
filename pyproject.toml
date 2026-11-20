@@ -21,6 +21,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+plasmapy = ["plasmapy"]
 
 [project.entry-points.pytest11]
 tsverify = "tsverify.pytest_plugin"

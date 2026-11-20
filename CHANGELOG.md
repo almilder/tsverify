@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+Known-defect signatures, an L1 Z′ level, and two more codes under test: PlasmaPy and a toy code with planted
+defects (Phase 4).
+
+- `tsverify.signatures`: when a spectrum test fails (L2 cases, high-Z, probes), tsverify retries the oracle
+  under every single-convention change and with every known defect, and names each one under which the code
+  agrees.
+  - The defects: a temperature off by 2 (electrons, ions or both, either way), as from mixing
+    v_T = √(T/m) and √(2T/m); and the electron f′ taken as a forward or backward difference between
+    wavelength samples.
+  - If nothing explains the failure, it is called a likely physics error, with a pointer to the L1 test.
+- L1 `Adapter.zprime(zeta)` and `tsverify.conformance.test_zprime_matches_faddeeva`: the code's Z′ on
+  −15 ≤ ζ ≤ 15 against the Faddeeva function, to `REFERENCE.zprime_abs = 2.5e-4`. That is about the Z′ error
+  that moves an IAW spectrum by the A1 L2 tolerance; rdWT's 1.6e-3 moved one by 0.65 %. A failure reads the
+  error for table edges (jumps), linear interpolation between table nodes (regularly spaced zeros) and the
+  error of tsadar's legacy rdWT table.
+- `tsverify.adapters.toy:ToyAdapter(defect)`: a small Maxwellian code, written apart from the oracle, with
+  five switchable defects: `flow-sign`, `no-relativistic-factor`, `forward-difference-f'`, `thermal-speed` and
+  `zprime-table`. Without a defect it passes all 41 tests it supports. Self-test: each spectrum defect fails
+  9–13 tests, and every one of those failures names that defect and nothing else. The Z′ table is caught at
+  L1, with its node spacing (0.1) and its edge (|ζ| = 8).
+- `tsverify.adapters.plasmapy:PlasmaPyAdapter`: PlasmaPy 2025.8.0 `thomson.spectral_density` at L1 and L2
+  (`pip install "tsverify[plasmapy]"`). It declares lab-frame electron velocities, S per angular frequency and
+  no relativistic factor, and is converted to absolute units (S/2π · r_e² n_e).
+  - It passes all 46 tests it supports. All four probes confirm the declared conventions. Kappa EDFs and L3
+    are not supported.
+  - The worst peak-normalized Linf is 3.0e-4 (A3 flat top at 2048 points); A1 is within 4.2e-5. Z′ matches
+    the Faddeeva function exactly.
+  - The remaining difference, at the 1e-5 level, comes from the oracle's rounded constants (r_e = 2.8179e-13
+    cm, m_e c² = 510.9896 keV, m_p = 1836.1 m_e, kept from tsadar for bit-identity) against PlasmaPy's CODATA
+    values.
+- The L2 tests record their measured Linf and L1 (`record_property`).
+- `tsverify.compare` holds `expected_spectral_density` and `spectral_errors`, so the diagnosis code needs no
+  pytest. `oracle.electron_phase_velocity` and `oracle.plasma_dispersion_derivative` are new; the default
+  oracle path stays bit-identical to 0.2.0 for every catalog case.
+- CI also runs the conformance tests against the toy code, plus a separate PlasmaPy job.
+- Gate against tsadar (branch `tsverify-phase4`):
+  - `TsadarAdapter.zprime` exposes FormFactor's ion Z′ (its 0.01-step table, interpolated linearly, plus
+    the tails). A new tsadar test checks that `other.zprime: legacy` is named as the rdWT table with an edge
+    at |ζ| = 8.2.
+  - 141 → 143 passed. The 2 new tests are the L1 test (max error 1.0e-4, which is exactly the linear-interpolation
+    bound h²/8·|Re Z‴(0)|) and the legacy-table test. No state changes.
+  - All 33 earlier recorded values are identical, plus 79 newly recorded L2 errors (worst 1.8e-3 on A3
+    two-humped ions at 2048 points, against 2.5e-3).
+
 ## 0.3.0 (unreleased)
 
 Code conventions as explicit options, plus convention probes (Phase 3).

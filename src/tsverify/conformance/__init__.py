@@ -12,6 +12,7 @@ from .test_spectral_density import (
     test_spectral_density_matches_the_oracle,
     test_spectral_density_matches_the_oracle_across_plasmas,
 )
+from .test_zprime import test_zprime_matches_faddeeva
 from .test_volume import (
     test_aperture_weighted_sum_matches_the_oracle,
     test_gradient_average_matches_the_averaged_oracle_spectrum,
@@ -30,4 +31,5 @@ __all__ = [
     "test_spectral_density_matches_the_oracle_across_plasmas",
     "test_the_same_plasma_written_differently_gives_the_same_spectrum",
     "test_zero_gradient_collapses_to_a_single_point",
+    "test_zprime_matches_faddeeva",
 ]

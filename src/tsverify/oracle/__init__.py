@@ -18,9 +18,10 @@ from .edf import (
     mixture_density,
     mixture_susceptibility,
     plasma_dispersion,
+    plasma_dispersion_derivative,
 )
 from .metrics import peak_wavelength, relative_errors
-from .physics import Ion, Plasma, form_factor_terms, plasma_frequency, scattering_geometry, spectral_density
+from .physics import Ion, Plasma, electron_phase_velocity, form_factor_terms, plasma_frequency, scattering_geometry, spectral_density
 from .relativistic import selden_spectrum
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "Plasma",
     "QuadratureEDF",
     "detector_spectrum",
+    "electron_phase_velocity",
     "form_factor_terms",
     "maxwellian_response",
     "mixture_density",
@@ -45,6 +47,7 @@ __all__ = [
     "peak_wavelength",
     "pixel_edges",
     "plasma_dispersion",
+    "plasma_dispersion_derivative",
     "plasma_frequency",
     "rectangular_notch",
     "relative_errors",

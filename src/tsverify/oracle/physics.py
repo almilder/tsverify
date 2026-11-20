@@ -58,6 +58,19 @@ def plasma_frequency(ne_1e20):
     return np.sqrt(4.0 * np.pi * ELECTRON_CHARGE_SQUARED * ne_1e20 * 1.0e20 / ELECTRON_MASS)
 
 
+def electron_phase_velocity(k, omega, plasma: Plasma):
+    """``(x_e, k lambda_De, v_Te)``: the electrons' normalized phase velocity in the electron fluid frame."""
+    z = np.array([ion.Z for ion in plasma.ions], dtype=float)
+    fract = np.array([ion.fract for ion in plasma.ions], dtype=float)
+    fract = fract / fract.sum()
+    flows = np.array([ion.Va for ion in plasma.ions], dtype=float) * 1.0e6
+    electron_flow = float(np.sum(z * fract * flows) / np.sum(z * fract)) + plasma.ud * 1.0e6
+    v_te = np.sqrt(plasma.Te / ELECTRON_MASS)
+    k_lambda_de = v_te * k / plasma_frequency(plasma.ne)
+    x_e = (omega - k * electron_flow) / (k * v_te)
+    return x_e, k_lambda_de, v_te
+
+
 def form_factor_terms(k, omega, plasma: Plasma):
     """Electron and ion parts of the collisionless ``S(k, omega)`` (normalized so ``int S d omega`` is the static
     structure factor), with ``chi_e`` and ``chi_i``.
@@ -65,13 +78,11 @@ def form_factor_terms(k, omega, plasma: Plasma):
     k = np.asarray(k, dtype=float)
     omega = np.asarray(omega, dtype=float)
     ne = plasma.ne * 1.0e20
-    omega_pe = plasma_frequency(plasma.ne)
 
     z = np.array([ion.Z for ion in plasma.ions], dtype=float)
     fract = np.array([ion.fract for ion in plasma.ions], dtype=float)
     fract = fract / fract.sum()
     zbar = float(np.sum(z * fract))
-    flows = np.array([ion.Va for ion in plasma.ions], dtype=float) * 1.0e6
 
     chi_i = 0.0
     ion_term = 0.0
@@ -84,10 +95,7 @@ def form_factor_terms(k, omega, plasma: Plasma):
         chi_i = chi_i + mixture_susceptibility(x, v_t * k / omega_ps, ion.components)
         ion_term = ion_term + (frac * ion.Z**2 / zbar) * mixture_density(x, ion.components) / v_t
 
-    electron_flow = float(np.sum(z * fract * flows) / np.sum(z * fract)) + plasma.ud * 1.0e6
-    v_te = np.sqrt(plasma.Te / ELECTRON_MASS)
-    k_lambda_de = v_te * k / omega_pe
-    x_e = (omega - k * electron_flow) / (k * v_te)
+    x_e, k_lambda_de, v_te = electron_phase_velocity(k, omega, plasma)
     chi_e = mixture_susceptibility(x_e, k_lambda_de, plasma.electrons)
     f_e = mixture_density(x_e, plasma.electrons) / v_te
 

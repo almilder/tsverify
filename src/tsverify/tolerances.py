@@ -13,6 +13,7 @@ class Tolerances:
     detector_linf: dict = field(default_factory=lambda: {"EPW": 1.5e-3, "IAW": 1.0e-3})
     detector_l1: dict = field(default_factory=lambda: {"EPW": 1.0e-3, "IAW": 1.0e-3})
     peak_nm: dict = field(default_factory=lambda: {"EPW": 5.0e-3, "IAW": 5.0e-4})
+    zprime_abs: float = 2.5e-4
     high_z_linf: float = 1.0e-2
     high_z_peak_nm: float = 5.0e-5
     sweep_linf: float = 2.0e-3
