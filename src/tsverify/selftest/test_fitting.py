@@ -53,11 +53,22 @@ class BoundFitter(OracleAdapter):
         return FitResult(estimates, sigmas)
 
 
-def test_sigmas_at_the_bound_pass_and_sqrt2_too_large_is_named():
+def test_the_cramer_rao_test_is_one_sided():
     task = tasks.cramer_rao_task(NAME, CASE, START, "oracle")
-    assert score(BoundFitter(), task).status == "passed"
+    at_bound = score(BoundFitter(), task)
+    assert at_bound.status == "passed" and at_bound.message == ""
     inflated = score(BoundFitter(np.sqrt(2.0)), task)
-    assert inflated.status == "failed" and "off by the same factor, sqrt(2)" in inflated.message
+    assert inflated.status == "passed" and "off by the same factor, sqrt(2)" in inflated.message
+    assert abs(inflated.measurements["ion1.Va: efficiency"] - 0.5) < 1e-9
+    shrunk = score(BoundFitter(1.0 / np.sqrt(2.0)), task)
+    assert shrunk.status == "failed" and "overconfident" in shrunk.message and "1/sqrt(2)" in shrunk.message
+
+
+def test_residual_based_sigmas_skip_the_noiseless_cramer_rao_test():
+    adapter = BoundFitter()
+    adapter.conventions = Conventions(sigma_from="residuals")
+    result = score(adapter, tasks.cramer_rao_task(NAME, CASE, START, "oracle"))
+    assert result.status == "not supported" and "residuals" in result.message
 
 
 def test_a_fit_without_sigmas_or_with_a_missing_estimate():

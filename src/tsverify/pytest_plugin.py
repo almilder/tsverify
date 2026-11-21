@@ -20,6 +20,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: an expensive tsverify conformance test")
+    config.addinivalue_line("markers", "heavy: a tsverify conformance test of many fits (minutes per test)")
 
 
 def pytest_sessionfinish(session):

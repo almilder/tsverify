@@ -13,8 +13,14 @@ def pixel_edges(centers):
     return np.concatenate([centers - d[0] / 2.0, [centers[-1] + d[0] / 2.0]])
 
 
-def detector_spectrum(spectrum, centers, sigma, *, transmission=None, samples_per_sigma=40, pad_sigmas=8.0):
-    """Pixel means of the Gaussian-blurred spectrum (optionally filtered by ``transmission``), exact over each pixel."""
+def detector_spectrum(spectrum, centers, sigma, *, transmission=None, samples_per_sigma=40, pad_sigmas=8.0,
+                      band_sigmas=None):
+    """Pixel means of the Gaussian-blurred spectrum (optionally filtered by ``transmission``), exact over each pixel.
+
+    ``band_sigmas``: evaluate the Gaussian CDF only within that many sigma of each pixel edge and count the samples
+    below the band as fully inside. With 10 the neglected terms are below 1e-20 relative and the result agrees with
+    the full sum to summation roundoff (about 5e-14 relative), 3-5 times faster; the default (None) keeps the full
+    sum."""
     edges = pixel_edges(centers)
     pixel = edges[1] - edges[0]
     step = min(sigma / samples_per_sigma, pixel / 400.0)
@@ -26,7 +32,14 @@ def detector_spectrum(spectrum, centers, sigma, *, transmission=None, samples_pe
     weights = np.full(fine.size, fine[1] - fine[0])
     weights[[0, -1]] *= 0.5
     weighted = source * weights
-    cumulative = np.array([np.dot(weighted, ndtr((e - fine) / sigma)) for e in edges])
+    if band_sigmas is None:
+        cumulative = np.array([np.dot(weighted, ndtr((e - fine) / sigma)) for e in edges])
+    else:
+        below = np.concatenate([[0.0], np.cumsum(weighted)])
+        first = np.searchsorted(fine, edges - band_sigmas * sigma)
+        last = np.searchsorted(fine, edges + band_sigmas * sigma, side="right")
+        cumulative = np.array([below[a] + np.dot(weighted[a:b], ndtr((e - fine[a:b]) / sigma))
+                               for e, a, b in zip(edges, first, last)])
     return np.diff(cumulative) / np.diff(edges)
 
 

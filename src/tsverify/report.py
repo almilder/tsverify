@@ -83,11 +83,17 @@ def markdown(results, meta):
         if c:
             lines.append(f"| {title} | {c['passed']} | {c['failed']} | {c['not supported']} |")
 
+    noted = [r for r in results if r.status == "passed" and r.message]
     failed = [r for r in results if r.status == "failed"]
     if failed:
         lines += ["", "## Failures", ""]
         for r in failed:
             lines += [f"### `{r.task}`", "", r.message, ""]
+
+    if noted:
+        lines += ["", "## Notes on passing tests", ""]
+        for r in noted:
+            lines += [f"- `{r.task}`: {r.message}"]
 
     for level, title in LEVELS:
         shown = [r for r in results if r.level == level and r.status != "not supported"]

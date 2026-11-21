@@ -11,6 +11,10 @@ fit range, ``amplitude1``, ``amplitude2``, ..., each scaling the pixels of its r
 
 Plasma parameter names: ``ne``, ``Te``, ``ud``, and ``ion<k>.Ti``, ``ion<k>.Va``, ``ion<k>.fract`` with ``k``
 counted from 1, in the catalog's units.
+
+A :class:`ShotProblem` is several lineouts of one shot that share a camera (:mod:`tsverify.camera`). Its lineouts
+carry no variance: the code is given the background and the camera's nominal parameters, and sizes the noise
+itself. It returns a :class:`ShotResult`.
 """
 
 from __future__ import annotations
@@ -84,6 +88,18 @@ class FitProblem:
         return np.linspace(*self.detector.lam_range, self.detector.pixels)
 
 
+@dataclass(frozen=True, eq=False)
+class ShotProblem:
+    """``lineouts``: one :class:`FitProblem` per lineout, with ``variance`` None and ``data`` that include the
+    background. ``backgrounds``: the background of each lineout, in counts, which the model adds to the spectrum.
+    ``camera``: the nominal camera (:class:`tsverify.camera.Camera`); its gain, excess-noise factor, rows and
+    spread function are right, its read noise may not be."""
+
+    lineouts: tuple
+    backgrounds: tuple
+    camera: object
+
+
 @dataclass(frozen=True)
 class FitResult:
     """``estimates`` and, if the code reports them, ``sigmas`` (one-standard-deviation uncertainties), keyed by
@@ -91,6 +107,14 @@ class FitResult:
 
     estimates: dict
     sigmas: dict | None = None
+
+
+@dataclass(frozen=True)
+class ShotResult:
+    """One :class:`FitResult` per lineout, and optionally the noise the code sized, e.g. ``{"read_noise": ...}``."""
+
+    fits: tuple
+    noise: dict | None = None
 
 
 def fit_mask(det, centers):
@@ -154,15 +178,26 @@ def cramer_rao(model, truth: Volume, amplitudes, det, free, variance, mask):
     return np.sqrt(np.diag(np.linalg.inv(fisher)))
 
 
-def least_squares_fit(model, problem: FitProblem):
+def least_squares_fit(model, problem: FitProblem, covariance=None, offset=None):
     """A reference fitter for Python codes with an L3 model: weighted least squares from the start, with sigmas from
     ``(J^T W J)^-1`` at the solution. ``model(volume)`` returns the detector values normalized to
-    ``problem.detector.amplitude``."""
+    ``problem.detector.amplitude``. ``covariance``: a full noise covariance on the fit pixels, used instead of
+    ``problem.variance``; ``offset``: counts added to the prediction (a background)."""
+    from scipy.linalg import cholesky, solve_triangular
     from scipy.optimize import least_squares
 
     start = np.array([value_of(problem.start, problem.start_amplitudes, n) for n in problem.free], dtype=float)
     scale = np.where(start != 0.0, np.abs(start), 1.0)
-    weight = 1.0 / np.sqrt(problem.variance[problem.mask])
+    if covariance is None:
+        weight = 1.0 / np.sqrt(problem.variance[problem.mask])
+
+        def whiten(r):
+            return r * weight
+    else:
+        lower = cholesky(covariance, lower=True)
+
+        def whiten(r):
+            return solve_triangular(lower, r, lower=True)
     shapes = {}
 
     def residuals(x):
@@ -172,10 +207,59 @@ def least_squares_fit(model, problem: FitProblem):
         if key not in shapes:
             shapes[key] = model(volume)
         prediction = shapes[key] * gains(problem.detector, amplitudes)
-        return (prediction[problem.mask] - problem.data[problem.mask]) * weight
+        if offset is not None:
+            prediction = prediction + offset
+        return whiten(prediction[problem.mask] - problem.data[problem.mask])
 
     solution = least_squares(residuals, start / scale, jac="3-point", xtol=1e-12, ftol=1e-12, gtol=1e-12)
     covariance = np.linalg.inv(solution.jac.T @ solution.jac) * np.outer(scale, scale)
     estimates = dict(zip(problem.free, (solution.x * scale).tolist()))
     sigmas = dict(zip(problem.free, np.sqrt(np.diag(covariance)).tolist()))
     return FitResult(estimates, sigmas)
+
+
+def size_read_noise(camera, means, residuals, parameters):
+    """Maximum-likelihood read noise of a shot, the other camera parameters fixed: the residuals of all lineouts
+    (on all pixels), with ``means`` the fitted model plus background, inflated by ``N/(N - parameters)`` for the
+    fitted parameters."""
+    from scipy.optimize import minimize_scalar
+
+    decomposed = []
+    for mean, residual in zip(means, residuals):
+        n = len(residual)
+        eigen, vectors = np.linalg.eigh(camera.shot_covariance(mean))
+        decomposed.append((np.maximum(eigen, 0.0), (vectors.T @ residual) ** 2 * n / (n - parameters)))
+
+    def negative_log_likelihood(log_variance):
+        floor = camera.rows * np.exp(log_variance)
+        return sum(np.sum(y2 / (eig + floor) + np.log(eig + floor)) for eig, y2 in decomposed)
+
+    best = minimize_scalar(negative_log_likelihood, bounds=(np.log(1e-8), np.log(1e10)), method="bounded",
+                           options={"xatol": 1e-6})
+    return float(np.sqrt(np.exp(best.x)))
+
+
+def sized_shot_fit(model, problem: ShotProblem):
+    """The reference shot fitter: fit every lineout with the full covariance of the nominal camera, size the read
+    noise from the pooled residuals (:func:`size_read_noise`), and fit again with it. ``model(volume)`` returns the
+    detector values normalized to the detector amplitude."""
+    camera = problem.camera
+    current = [(lineout.start, lineout.start_amplitudes) for lineout in problem.lineouts]
+    read = camera.read_noise
+    fits = []
+    for round_ in range(2):
+        noise = camera.with_read_noise(read)
+        fits = []
+        for lineout, background, (volume, amplitudes) in zip(problem.lineouts, problem.backgrounds, current):
+            mean = predict(model, volume, amplitudes, lineout.detector) + background
+            covariance = noise.covariance(mean)[np.ix_(lineout.mask, lineout.mask)]
+            start = dataclasses.replace(lineout, start=volume, start_amplitudes=amplitudes)
+            fits.append(least_squares_fit(model, start, covariance=covariance, offset=background))
+        current = [with_values(lineout.start, lineout.start_amplitudes, fit.estimates)
+                   for lineout, fit in zip(problem.lineouts, fits)]
+        if round_ == 0:
+            means = [predict(model, volume, amplitudes, lineout.detector) + background
+                     for lineout, background, (volume, amplitudes) in zip(problem.lineouts, problem.backgrounds, current)]
+            residuals = [lineout.data - mean for lineout, mean in zip(problem.lineouts, means)]
+            read = size_read_noise(camera, means, residuals, len(problem.lineouts[0].free))
+    return ShotResult(tuple(fits), {"read_noise": read})

@@ -24,10 +24,10 @@ def spectral_errors(conventions, model, expected, mask=None):
     return oracle.relative_errors(model, expected)
 
 
-def oracle_detector(det, centers, spectrum):
+def oracle_detector(det, centers, spectrum, band_sigmas=None):
     """The analytic detector spectrum of ``spectrum`` (a callable of wavelength in nm) on ``det``."""
     transmission = oracle.rectangular_notch(*det.notch) if det.notch else None
-    values = oracle.detector_spectrum(spectrum, centers, det.sigma, transmission=transmission)
+    values = oracle.detector_spectrum(spectrum, centers, det.sigma, transmission=transmission, band_sigmas=band_sigmas)
     return oracle.normalize_in_ranges(centers, values, det.amp_ranges, det.amplitude)
 
 

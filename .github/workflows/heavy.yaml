@@ -1,0 +1,23 @@
+name: heavy
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  camera-noise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ".[test]"
+      - run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.oracle:OracleAdapter -m heavy --durations=20 --ts-report report-heavy.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: heavy-report
+          path: report-heavy.md

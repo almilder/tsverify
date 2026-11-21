@@ -10,6 +10,7 @@ from .test_fit import (
     test_fit_recovers_the_truth_from_oracle_data,
     test_fit_uncertainty_is_calibrated,
     test_fit_uncertainty_matches_the_cramer_rao_bound,
+    test_fit_uncertainty_with_camera_noise,
 )
 from .test_relativistic import test_first_order_relativistic_accuracy_against_the_exact_spectrum
 from .test_spectral_density import (
@@ -33,6 +34,7 @@ __all__ = [
     "test_fit_recovers_the_truth_from_oracle_data",
     "test_fit_uncertainty_is_calibrated",
     "test_fit_uncertainty_matches_the_cramer_rao_bound",
+    "test_fit_uncertainty_with_camera_noise",
     "test_gradient_average_matches_the_averaged_oracle_spectrum",
     "test_high_z_ion_acoustic_resonance",
     "test_spectral_density_matches_the_oracle",

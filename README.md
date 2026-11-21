@@ -9,7 +9,7 @@ physics it shares no code with: the Debye–Hückel sum rule, the kinetic Bohm�
 Selden's relativistic tables, and the Faddeeva function.
 
 It started as the physics test suite of [tsadar](https://github.com/ergodicio/tsadar) and is being
-extracted into a code-independent package. **Status: pre-release (0.6).** It contains the oracle, its
+extracted into a code-independent package. **Status: pre-release (0.7).** It contains the oracle, its
 self-tests, the case catalog, and conformance tests at the Z′ (L1), spectrum (L2), detector (L3) and fitting
 (L4) depths that any code can run, through a Python adapter or by exchanging files. Each code declares its own conventions. When a test
 fails, tsverify names the convention mismatch or known defect that explains it, or says that none does.
@@ -134,13 +134,44 @@ for codes that fit the blue and red wings with separate gains, as tsadar does).
 | Test | Data | Check |
 |---|---|---|
 | recovery (EPW ne, Te; IAW Va, Ti) | noiseless oracle spectrum, start displaced (ne −20 %, Te +30 %, Va −2, Ti +63 %, amplitude −20 %) | every parameter within 1e-3 relative (Va 1e-3 absolute) |
-| σ against the Cramér–Rao bound, `self` | the code's own noiseless spectrum (needs L3; Python route only) | σ within 1 % of the bound from the oracle's Jacobian |
-| σ against the Cramér–Rao bound, `oracle` | the noiseless oracle spectrum | σ within 5 % of the bound |
+| σ against the Cramér–Rao bound, `self` | the code's own noiseless spectrum (needs L3; Python route only) | σ not more than 1 % below the bound from the oracle's Jacobian; efficiency (bound/σ)² reported |
+| σ against the Cramér–Rao bound, `oracle` | the noiseless oracle spectrum | σ not more than 5 % below the bound; efficiency reported |
 | calibration (`slow`) | 32 seeded realizations of counting noise | the pulls (estimate − noiseless estimate)/σ have mean 0 and width 1 within their 3σ sampling bands; 1σ and 2σ coverage are reported |
+| camera noise (`slow`, `heavy`, `fit_shot`) | 12 shots × 4 lineouts with camera noise the code sizes itself (below), in four regimes | pooled pulls as for calibration; the read noise the code sized, against the truth |
+
+The Cramér–Rao test is one-sided: no unbiased fit beats the bound, so a σ below it is overconfident and fails.
+A σ above it passes with its efficiency reported and a note in the report: it is honest for a fit that is
+inefficient by design (for example unweighted least squares), and an overestimate for an efficient one, which
+the calibration test then shows as pulls narrower than 1. A code whose σ comes from its fit residuals (for
+example a sandwich covariance) declares `Conventions(sigma_from="residuals")`: residuals vanish on the
+noiseless data of the Cramér–Rao test, so that test does not apply and calibration checks it instead.
 
 A σ that is off the bound by √2 or 2 for every parameter is named as a loss-normalization slip (the Hessian
 of χ² against that of −ln L = χ²/2). `tsverify.fitting.least_squares_fit` is a reference weighted
 least-squares fitter for a Python code that has an L3 model but no fitter of its own.
+
+**Camera noise (`Adapter.fit_shot`).** Real noise must be sized from the data: it drifts from day to day with the
+camera and from shot to shot with the background. A `ShotProblem` gives the code several lineouts of one shot that
+share a camera (`tsverify.camera.Camera`), each with its background, and the camera's *nominal* parameters, but
+not the variance. The noise is Poisson photoelectrons with an excess-noise factor, spread over neighbouring pixels
+by the CCD spread function, plus read noise summed over the lineout's rows: the form of tsadar's `covar` model.
+The gain, excess-noise factor, rows and spread function given are right; the read noise may not be.
+
+| Regime | true read noise (drifts ×0.8–1.25 per shot) | read noise the code is told | background |
+|---|---|---|---|
+| shot-noise | 2 | 2 | 0 |
+| background | 10 | 10 | 2000 counts (drifts ×0.7–1.4, 30 % ramp) |
+| read-noise | 65 | 65 | 50 |
+| miscalibrated | 65 | 17 | 200 |
+
+`tsverify.fitting.sized_shot_fit` is the reference: it fits each lineout with the full covariance of the nominal
+camera, sizes the read noise by maximum likelihood from the residuals of all lineouts pooled, and fits again. Shot
+problems run on the Python route only for now.
+
+**Two fitters across count levels.** `tsverify.convergence.compare_fitters(a, b)` fits the same noisy data with two
+adapters (two codes, or two configurations of one) at 1e3, 1e4 and 1e5 counts. Consistent fitters differ by an
+amount that shrinks like the noise (log-log slope about −0.5) and stays a fixed fraction of σ; a difference that
+stops shrinking is systematic.
 
 ### Conventions
 
@@ -159,6 +190,7 @@ code reports it.
 | `dispersion_in_k` | `True`: k_s, k_i include the plasma dispersion; `False`: vacuum ω/c |
 | `absolute` | `True`: L2 in the oracle's absolute units; `False`: L2 compared as a shape |
 | `per_range_amplitudes` | `()`: L4 fits use one amplitude; `("EPW",)`: one per fit range on the EPW channel |
+| `sigma_from` | `"noise_model"`: σ from a likelihood with a noise model; `"residuals"`: σ from the fit residuals |
 
 The **convention probes** are four small asymmetric plasmas: an ion flow, an electron drift, a drift with
 flowing ions, and broad EPW wings. When a code fails a probe, the probe retries every single-convention
@@ -206,8 +238,10 @@ Physical constants are the CODATA 2022 values from NIST (https://physics.nist.go
 - `tsverify.signatures`: the known-defect signatures and the explanations of a failure.
 - `tsverify.adapters`: the oracle, PlasmaPy and toy adapters.
 - `tsverify.tasks`: every check as runs plus a scoring function, shared by both routes.
-- `tsverify.fitting`: the fit problem and result, parameter names, the Cramér–Rao bound and the reference
-  fitter.
+- `tsverify.fitting`: the fit and shot problems and results, parameter names, the Cramér–Rao bound, the
+  reference fitter and read-noise sizing.
+- `tsverify.camera`: the camera noise model and generator. `tsverify.convergence`: two fitters across count
+  levels.
 - `tsverify.exchange`, `tsverify.report` and the `tsverify` command: the file route and the reports.
 - `tsverify.instrument.Detector`: a spectrometer channel (pixel axis, Gaussian IRF, fit ranges, notch, peak
   windows).

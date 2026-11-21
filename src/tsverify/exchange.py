@@ -39,6 +39,7 @@ OUTPUT_COLUMNS = {
     "fit": ("parameter", "estimate"),
 }
 PYTHON_ONLY = "needs the code's own detector spectrum as its data, so it runs on the Python route only"
+SHOT_PYTHON_ONLY = "shot problems with camera noise run on the Python route only (not yet in the file route)"
 MAXWELLIAN = (GaussianComponent(),)
 
 
@@ -209,6 +210,16 @@ def _expected(context, task, name, run):
     return ("pixel_center_nm", "value"), (centers, _expected_detector(context, run.volume, run.detector, centers))
 
 
+def not_exported(task, conventions):
+    """Why ``task`` is not in a bundle for a code with ``conventions``, or None."""
+    reason = task.not_applicable(conventions)
+    if not reason and any(run.needs for run in task.runs.values()):
+        reason = PYTHON_ONLY
+    if not reason and any(run.kind == "fit_shot" for run in task.runs.values()):
+        reason = SHOT_PYTHON_ONLY
+    return reason
+
+
 def export(bundle, conventions: Conventions = Conventions(), *, slow=False, formats=FORMATS, force=False):
     """Write the bundle for a code with ``conventions`` into the directory ``bundle``."""
     bundle = Path(bundle)
@@ -221,9 +232,7 @@ def export(bundle, conventions: Conventions = Conventions(), *, slow=False, form
     manifest = {"tsverify": __version__, "conventions": dataclasses.asdict(conventions), "slow": slow,
                 "formats": list(formats), "tasks": [], "runs": []}
     for task in all_tasks(slow=slow):
-        reason = task.not_applicable(conventions)
-        if not reason and any(run.needs for run in task.runs.values()):
-            reason = PYTHON_ONLY
+        reason = not_exported(task, conventions)
         ids = run_ids(task)
         manifest["tasks"].append({"task": task.id, "test": task.test, "level": task.level,
                                   "runs": [] if reason else list(ids.values()), "not_applicable": reason})

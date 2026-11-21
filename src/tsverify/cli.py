@@ -20,6 +20,7 @@ def _conventions(args):
         dispersion_in_k=not args.vacuum_k,
         absolute=not args.shape_only,
         per_range_amplitudes=tuple(args.per_range_amplitudes),
+        sigma_from=args.sigma_from,
     )
 
 
@@ -70,6 +71,8 @@ def parser():
     c.add_argument("--shape-only", action="store_true", help="the code's spectra are not in absolute units")
     c.add_argument("--per-range-amplitudes", action="append", default=[], metavar="CHANNEL",
                    help="the code's fits on this channel (EPW or IAW) use one amplitude per fit range; repeatable")
+    c.add_argument("--sigma-from", choices=("noise_model", "residuals"), default="noise_model",
+                   help="where the code's fit uncertainties come from")
     e.set_defaults(func=_export)
 
     s = sub.add_parser("score", help="score a code's outputs in a bundle and write the report")

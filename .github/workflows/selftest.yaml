@@ -21,7 +21,7 @@ jobs:
       - if: matrix.python-version != '3.13'
         run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.oracle:OracleAdapter -m "not slow"
       - if: matrix.python-version == '3.13'
-        run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.oracle:OracleAdapter --durations=10 --ts-report report-oracle.md
+        run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.oracle:OracleAdapter -m "not heavy" --durations=10 --ts-report report-oracle.md
       - run: pytest --pyargs tsverify.conformance --ts-adapter tsverify.adapters.toy:ToyAdapter --ts-report report-toy.md
       - name: File route with the toy code
         run: |

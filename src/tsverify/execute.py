@@ -37,6 +37,12 @@ def evaluate(adapter, run, outputs=None):
         if run.kind == "fit":
             problem = run.problem(conventions, {n: (outputs or {})[n] for n in run.needs})
             return problem, adapter.fit(express_problem(problem, conventions))
+        if run.kind == "fit_shot":
+            problem = run.problem(conventions, {n: (outputs or {})[n] for n in run.needs})
+            expressed = dataclasses.replace(
+                problem, lineouts=tuple(express_problem(lineout, conventions) for lineout in problem.lineouts)
+            )
+            return problem, adapter.fit_shot(expressed)
         expressed = dataclasses.replace(run.volume, plasma=conventions.express(run.volume.plasma))
         centers, values = adapter.detector_spectrum(expressed, run.detector)
         return np.asarray(centers), np.asarray(values)
@@ -50,6 +56,16 @@ def fit_outputs(name, problem, result, conventions):
     return {name: canonical_estimates(result, problem, conventions), f"{name} problem": problem}
 
 
+def shot_outputs(name, problem, result, conventions):
+    """The scoring inputs of a shot run: ``{"fits": [(estimates, sigmas) per lineout], "noise": ...}`` (canonical)
+    and, under ``<name> problem``, the problem. Raises KeyError for a missing estimate and ValueError for a wrong
+    number of lineouts."""
+    if len(result.fits) != len(problem.lineouts):
+        raise ValueError(f"the shot has {len(problem.lineouts)} lineouts, the code returned {len(result.fits)} fits")
+    fits = [canonical_estimates(fit, lineout, conventions) for fit, lineout in zip(result.fits, problem.lineouts)]
+    return {name: {"fits": fits, "noise": result.noise}, f"{name} problem": problem}
+
+
 def score(adapter, task):
     """The :class:`tsverify.tasks.Result` of ``task`` for the code behind ``adapter``."""
     reason = task.not_applicable(adapter.conventions)
@@ -61,12 +77,15 @@ def score(adapter, task):
             value = evaluate(adapter, run, outputs)
         except NotSupported as why:
             return task.unsupported(f"{adapter.name}: {why}")
-        if run.kind == "fit":
+        if run.kind in ("fit", "fit_shot"):
+            collect = fit_outputs if run.kind == "fit" else shot_outputs
             try:
-                outputs |= fit_outputs(name, *value, adapter.conventions)
+                outputs |= collect(name, *value, adapter.conventions)
             except KeyError as key:
                 return dataclasses.replace(task.unsupported(""), status="failed",
                                            message=f"{task.id}: the fit returned no estimate for {key}")
+            except ValueError as error:
+                return dataclasses.replace(task.unsupported(""), status="failed", message=f"{task.id}: {error}")
         else:
             outputs[name] = value
     return task.result(context(adapter), outputs)

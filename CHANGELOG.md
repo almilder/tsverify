@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+Camera noise the code must size, a one-sided Cramér–Rao test, and fitters compared across count levels (Part A of
+the noise-sizing plan).
+
+- **One-sided Cramér–Rao test.** No unbiased fit has a smaller σ than the bound, so a σ more than the tolerance
+  below it fails as overconfident.
+  - A σ above the bound passes. Its efficiency (bound/σ)² is recorded, and a note goes into the report's new
+    "Notes on passing tests" section.
+  - That note still names the √2 loss-normalization signature. A σ above the bound is honest for a fit that is
+    inefficient by design, and an overestimate for an efficient one, which the calibration test tells apart.
+- **New convention `sigma_from`**: `"noise_model"` (default) or `"residuals"` (CLI `--sigma-from`). Residual-based
+  σ, such as a sandwich covariance, vanishes on noiseless data, so for such codes the noiseless Cramér–Rao tests do
+  not apply and calibration checks them.
+- **`tsverify.camera.Camera`**: camera noise of the form of tsadar's `covar` model (Swadling et al. 2022).
+  - Poisson photoelectrons with an excess-noise factor, drawn from a gamma distribution so mean and variance are
+    exact at low counts.
+  - A gain, the CCD spread function as C·diag·Cᵀ, read noise summed over the lineout's rows, and the background
+    in the mean.
+  - `covariance(mean)` and `sample(mean, rng)`. A self-test checks the sampled covariance against the formula.
+- **L4 shot problems** (`Adapter.fit_shot`, `fitting.ShotProblem` / `ShotResult`).
+  - Several lineouts of one shot share a camera. The code gets the data, the background and the *nominal*
+    camera (gain, excess factor, rows and spread function right; read noise possibly wrong), not the variance.
+  - It returns one fit per lineout and, optionally, the noise it sized.
+- **`test_fit_uncertainty_with_camera_noise`** (`slow`, `heavy`):
+  - EPW and IAW problems, each with 12 shots of 4 lineouts.
+  - Read noise drifting ×0.8–1.25 and background ×0.7–1.4 from shot to shot.
+  - Four regimes: shot-noise, background, read-noise, and miscalibrated (told 17, true about 65).
+  - Scored on pooled pulls and, in the read-noise and miscalibrated regimes, the sized read noise against the
+    truth (median within 20 %).
+  - Shot problems run on the Python route only.
+- **Reference shot fitter** `fitting.sized_shot_fit`, used by `OracleAdapter.fit_shot`:
+  - It fits with the full covariance of the nominal camera, sizes the read noise by maximum likelihood from the
+    residuals of all lineouts pooled (`fitting.size_read_noise`), and fits again.
+  - `least_squares_fit` takes an optional full covariance (Cholesky whitening) and a background offset.
+- **`tsverify.convergence.compare_fitters(a, b)`**: two fitters on the same noisy data at 1e3, 1e4 and 1e5
+  counts. It reports the rms difference, the difference in units of σ, and the log-log slope (about −0.5 when
+  both are consistent).
+- **`oracle.detector_spectrum(..., band_sigmas=)`**: an optional banded form of the exact pixel integration that
+  agrees with the full sum to 5e-14 and is 3–5× faster. Only the oracle adapter's fitting uses it; the default and
+  all L3 numerics are unchanged.
+- **CI**: the slow oracle job skips `heavy` tests. A new `heavy` workflow (weekly and on demand) runs them.
+- Results:
+  - **Oracle (reference shot fitter):** all 8 camera tasks pass. Pull widths 0.82–1.23, means within ±0.38, read
+    noise sized at 0.98–1.02 of the truth in every regime, including the miscalibrated one (24.8 min).
+  - **Why 12 shots and not 6:** with 6 shots, EPW-miscalibrated failed on the nₑ pull mean (−0.68 against
+    ±0.61). Over 16 shots the sized fit and a fit given the true covariance agree exactly (−0.24 ± 0.12 for both),
+    so it was a fluctuation of the first six shots, not the sizing. The fix was more shots (more statistics), not a
+    looser tolerance.
+  - **tsadar gate** (branch `tsverify-phase6`, experimental loss patch stashed): 146 → 152 passed. The new tests are
+    camera tests, which tsadar skips (no `fit_shot` yet). There are no state changes; all 210 recorded values are
+    identical, plus 14 new efficiency values.
+
 ## 0.6.0 (2026-11-20)
 
 Fitting tests (L4), with tsadar as the first fitting code (Phase 6).

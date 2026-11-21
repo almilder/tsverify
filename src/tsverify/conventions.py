@@ -17,6 +17,7 @@ import numpy as np
 from .oracle.physics import PER, RELATIVISTIC, Plasma
 
 ELECTRON_DRIFT = ("ion_frame", "lab")
+SIGMA_FROM = ("noise_model", "residuals")
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,9 @@ class Conventions:
     plasma dispersion in the scattered and incident wavenumbers. ``absolute``: L2 output in the oracle's
     absolute units; if False, L2 is compared as a shape (best least-squares scale). ``per_range_amplitudes``: the
     detector channels on which the code's fits use one amplitude per fit range instead of one overall amplitude
-    (L4)."""
+    (L4). ``sigma_from``: where the code's fit uncertainties come from, ``"noise_model"`` (a likelihood built from a
+    noise model, e.g. a Laplace Hessian) or ``"residuals"`` (e.g. a sandwich covariance from the fit residuals,
+    which vanish on noiseless data)."""
 
     flow_sign: int = 1
     electron_drift: str = "ion_frame"
@@ -37,6 +40,7 @@ class Conventions:
     dispersion_in_k: bool = True
     absolute: bool = True
     per_range_amplitudes: tuple = ()
+    sigma_from: str = "noise_model"
 
     def __post_init__(self):
         object.__setattr__(self, "per_range_amplitudes", tuple(self.per_range_amplitudes))
@@ -46,6 +50,7 @@ class Conventions:
             ("electron_drift", ELECTRON_DRIFT),
             ("relativistic", RELATIVISTIC),
             ("spectrum_per", PER),
+            ("sigma_from", SIGMA_FROM),
         ):
             if getattr(self, name) not in allowed:
                 raise ValueError(f"{name} must be one of {allowed}, got {getattr(self, name)!r}")

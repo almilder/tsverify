@@ -23,14 +23,15 @@ from .adapter import required_features
 from .cases import A1_CASES, SPECTRUM_CASES
 from . import fitting
 from .compare import detector_errors, expected_spectral_density, oracle_detector, spectral_errors
-from .fitting import FitProblem
+from .camera import Camera
+from .fitting import FitProblem, ShotProblem
 from .instrument import Detector
 from .oracle import ELECTRON_MASS, ELECTRON_MASS_KEV, Ion, Plasma
 from .signatures import explain_spectrum, verdict, zprime_signatures
 from .volume import Aperture, LinearGradient, Volume
 from .volume import spectral_density as volume_spectral_density
 
-KINDS = ("zprime", "spectral_density", "detector_spectrum", "fit")
+KINDS = ("zprime", "spectral_density", "detector_spectrum", "fit", "fit_shot")
 
 
 @dataclass(frozen=True, eq=False)
@@ -51,7 +52,7 @@ class Run:
     def required_features(self):
         if self.kind == "spectral_density":
             return required_features(self.plasma)
-        if self.kind in ("detector_spectrum", "fit"):
+        if self.kind in ("detector_spectrum", "fit", "fit_shot"):
             return required_features(self.volume.plasma, self.detector, self.volume)
         return set()
 
@@ -102,8 +103,9 @@ class Task:
         return Result(self.id, self.test, self.level, "not supported", message=reason)
 
 
-def _verdict(passed, measurements, checks, message):
-    return ("passed" if passed else "failed"), measurements, checks, ("" if passed else message)
+def _verdict(passed, measurements, checks, message, note=""):
+    """A scoring outcome; ``note`` is kept as the message of a passing result (reported under Notes)."""
+    return ("passed" if passed else "failed"), measurements, checks, (note if passed else message)
 
 
 def _hint(context):
@@ -559,7 +561,12 @@ def _constant_factor(ratios):
 
 
 def cramer_rao_task(name, case, start, variant):
-    """``self``: the code's own noiseless detector spectrum as data (needs L3); ``oracle``: oracle data."""
+    """``self``: the code's own noiseless detector spectrum as data (needs L3); ``oracle``: oracle data.
+
+    One-sided: no unbiased estimator has a smaller standard deviation than the bound, so a sigma more than ``tol``
+    below it is overconfident and fails. A sigma above the bound passes, with the efficiency (bound/sigma)^2
+    reported: it is honest for an estimator that is inefficient by design, and an overestimate for an efficient
+    one, which the calibration test tells apart."""
     det = _counts_detector(case)
     at_truth = _at_truth(case, start)
     if variant == "self":
@@ -580,15 +587,32 @@ def cramer_rao_task(name, case, start, variant):
         tol = context.tolerances.cramer_rao_self if variant == "self" else context.tolerances.cramer_rao_oracle
         ratios = [sigmas[p] / b for p, b in zip(problem.free, bound)]
         measurements = {f"{p}: sigma / cramer-rao": float(r) for p, r in zip(problem.free, ratios)}
-        checks = [(f"|{p}: sigma / cramer-rao - 1|", abs(r - 1.0), tol) for p, r in zip(problem.free, ratios)]
-        off = [f"{p} {r:.3f}" for p, r in zip(problem.free, ratios) if not abs(r - 1.0) < tol]
+        measurements |= {f"{p}: efficiency": float(1.0 / r**2) for p, r in zip(problem.free, ratios)}
+        checks = [(f"{p}: 1 - sigma / cramer-rao", 1.0 - r, tol) for p, r in zip(problem.free, ratios)]
+        low = [f"{p} {r:.3f}" for p, r in zip(problem.free, ratios) if not r > 1.0 - tol]
         message = (
-            f"L4-cramer-rao/{name}/{variant}: the reported sigmas depart from the Cramér–Rao bound by more than "
-            f"{tol:.0%}: sigma / bound = " + ", ".join(off) + "." + _constant_factor(ratios)
+            f"L4-cramer-rao/{name}/{variant}: the reported sigmas are below the Cramér–Rao bound by more than "
+            f"{tol:.0%}, which no unbiased fit can reach, so they are overconfident: sigma / bound = "
+            + ", ".join(low) + "." + _constant_factor(ratios)
         )
-        return _verdict(not off, measurements, checks, message)
+        high = [f"{p} {r:.3f}" for p, r in zip(problem.free, ratios) if r > 1.0 + tol]
+        note = ""
+        if high:
+            note = (
+                "sigma above the bound (efficiency < 1): " + ", ".join(high) + ". Honest if the fit is inefficient "
+                "by design; for an efficient fit it is an overestimate, which the calibration test shows as pulls "
+                "narrower than 1." + _constant_factor(ratios)
+            )
+        return _verdict(not low, measurements, checks, message, note)
 
-    return Task(f"L4/cramer-rao/{name}/{variant}", "test_fit_uncertainty_matches_the_cramer_rao_bound", "L4", runs, score)
+    def applies(conventions):
+        if conventions.sigma_from == "residuals":
+            return ("takes its sigma from the fit residuals, which vanish on the noiseless data of this test; the "
+                    "calibration test checks it")
+        return None
+
+    return Task(f"L4/cramer-rao/{name}/{variant}", "test_fit_uncertainty_matches_the_cramer_rao_bound", "L4", runs, score,
+                applies=applies)
 
 
 def _width_reading(widths, tol):
@@ -657,6 +681,128 @@ def calibration_task(name, case, start, index):
     return Task(f"L4/calibration/{name}", "test_fit_uncertainty_is_calibrated", "L4", runs, score, slow=True)
 
 
+# L4 with camera noise
+
+NOMINAL_CAMERA = Camera(gain=2.0, excess=1.15, read_noise=17.0, rows=3, psf_pixels=1.0)
+SHOTS = 12
+LINEOUTS = 4
+CAMERA_SEED = 20261121
+READ_NOISE_TOL = 0.2
+REFERENCE_SHOT = 10_000
+
+
+@dataclass(frozen=True)
+class CameraRegime:
+    """``read_noise``: the true read noise at the centre of its shot-to-shot drift (x0.8 to x1.25);
+    ``nominal_read_noise``: what the code is told; ``background``: flat background level in counts (drifting x0.7 to
+    x1.4, with a 30 % ramp across the detector); ``check_read_noise``: the read noise matters enough here to score
+    how well the code sized it."""
+
+    name: str
+    read_noise: float
+    nominal_read_noise: float
+    background: float
+    check_read_noise: bool
+
+
+CAMERA_REGIMES = (
+    CameraRegime("shot-noise", 2.0, 2.0, 0.0, False),
+    CameraRegime("background", 10.0, 10.0, 2000.0, False),
+    CameraRegime("read-noise", 65.0, 65.0, 50.0, True),
+    CameraRegime("miscalibrated", 65.0, 17.0, 200.0, True),
+)
+
+
+def _shot_noise(index, regime_index, shot):
+    """``(rng, true read noise, background level)`` of one shot."""
+    regime = CAMERA_REGIMES[regime_index]
+    rng = np.random.default_rng((CAMERA_SEED, index, regime_index, shot))
+    return rng, regime.read_noise * rng.uniform(0.8, 1.25), regime.background * rng.uniform(0.7, 1.4)
+
+
+def _shot(case, start, index, regime_index, shot, conventions, noiseless=False):
+    """A :class:`ShotProblem` of ``LINEOUTS`` lineouts of the truth plasma, at the truth start."""
+    regime = CAMERA_REGIMES[regime_index]
+    det = _counts_detector(case)
+    centers = np.linspace(*det.lam_range, det.pixels)
+    expected = oracle_model(conventions, det)(Volume(case.plasma))
+    rng, read, level = _shot_noise(index, regime_index, shot)
+    if noiseless:
+        level = regime.background
+    ramp = (centers - centers.mean()) / (centers.max() - centers.mean())
+    background = level * (1.0 + 0.3 * ramp)
+    camera = NOMINAL_CAMERA.with_read_noise(read)
+    amplitudes = conventions.amplitude_names(det)
+    start_volume, _ = fitting.with_values(Volume(case.plasma), {}, start)
+    mask = fitting.fit_mask(det, centers)
+    lineouts = []
+    for _ in range(LINEOUTS):
+        data = expected + background if noiseless else camera.sample(expected + background, rng)
+        lineouts.append(FitProblem(start_volume, dict.fromkeys(amplitudes, COUNTS), det, data, None, mask,
+                                   tuple(start) + amplitudes))
+    nominal = NOMINAL_CAMERA.with_read_noise(regime.nominal_read_noise)
+    return ShotProblem(tuple(lineouts), (background,) * LINEOUTS, nominal)
+
+
+def camera_task(name, case, start, index, regime_index):
+    """Calibration with camera noise the code must size: ``SHOTS`` shots of ``LINEOUTS`` lineouts, the read noise
+    and background drifting from shot to shot, the pulls (estimate - noiseless estimate)/sigma pooled over all
+    lineouts, and, if the code reports it, the read noise it sized against the truth."""
+    regime = CAMERA_REGIMES[regime_index]
+    at_truth = _at_truth(case, start)
+    det = _counts_detector(case)
+
+    def shot_run(shot, noiseless=False):
+        return Run("fit_shot", volume=Volume(case.plasma), detector=det,
+                   problem=lambda conventions, outputs: _shot(case, at_truth, index, regime_index, shot, conventions,
+                                                              noiseless))
+
+    runs = {"reference": shot_run(REFERENCE_SHOT, noiseless=True)}
+    for s in range(SHOTS):
+        runs[f"shot{s:02d}"] = shot_run(s)
+    n = SHOTS * LINEOUTS
+    mean_tol, width_tol = 3.0 / np.sqrt(n), 3.0 / np.sqrt(2.0 * (n - 1))
+
+    def score(context, out):
+        reference = out["reference"]["fits"][0][0]
+        shots = [out[f"shot{s:02d}"] for s in range(SHOTS)]
+        if any(sig is None for shot in shots for _, sig in shot["fits"]):
+            return "not supported", {}, [], "the code reports no uncertainties"
+        measurements, checks, off = {}, [], []
+        for parameter in reference:
+            pulls = np.array([(est[parameter] - reference[parameter]) / sig[parameter]
+                              for shot in shots for est, sig in shot["fits"]])
+            mean, width = float(pulls.mean()), float(pulls.std(ddof=1))
+            measurements |= {f"{parameter}: pull mean": mean, f"{parameter}: pull width": width,
+                             f"{parameter}: 1-sigma coverage": float(np.mean(np.abs(pulls) < 1.0))}
+            checks += [(f"|{parameter} pull mean|", abs(mean), mean_tol),
+                       (f"|{parameter} pull width - 1|", abs(width - 1.0), width_tol)]
+            if not (abs(mean) < mean_tol and abs(width - 1.0) < width_tol):
+                off.append(f"{parameter}: mean {mean:+.2f}, width {width:.2f}")
+        true_read = np.array([_shot_noise(index, regime_index, s)[1] for s in range(SHOTS)])
+        sized = [shot["noise"].get("read_noise") if shot["noise"] else None for shot in shots]
+        if all(r is not None for r in sized):
+            ratio = np.asarray(sized, dtype=float) / true_read
+            measurements |= {"read noise sized / true: median": float(np.median(ratio)),
+                             "read noise sized / true: min": float(ratio.min()),
+                             "read noise sized / true: max": float(ratio.max())}
+            if regime.check_read_noise:
+                checks.append(("|read noise sized / true - 1| (median)", abs(float(np.median(ratio)) - 1.0),
+                               READ_NOISE_TOL))
+                if not abs(float(np.median(ratio)) - 1.0) < READ_NOISE_TOL:
+                    off.append(f"read noise sized at {np.median(ratio):.2f} of the truth (median over shots)")
+        message = (
+            f"L4-camera/{name}/{regime.name}: over {SHOTS} shots of {LINEOUTS} lineouts with camera noise the code "
+            f"sizes itself (nominal read noise {regime.nominal_read_noise:g}, true {regime.read_noise:g} x0.8-1.25), "
+            f"the pulls should have mean 0 (within {mean_tol:.2f}) and width 1 (within {width_tol:.2f}): "
+            + "; ".join(off) + "."
+        )
+        return _verdict(not off, measurements, checks, message)
+
+    return Task(f"L4/camera/{name}/{regime.name}", "test_fit_uncertainty_with_camera_noise", "L4", runs, score,
+                slow=True)
+
+
 def all_tasks(slow=True):
     """Every task, in the order of the conformance tests."""
     tasks = [zprime_task()]
@@ -674,4 +820,5 @@ def all_tasks(slow=True):
     tasks += [cramer_rao_task(*p, variant) for p in FIT_PROBLEMS for variant in CRAMER_RAO_VARIANTS]
     if slow:
         tasks += [calibration_task(*p, index) for index, p in enumerate(FIT_PROBLEMS)]
+        tasks += [camera_task(*p, index, r) for index, p in enumerate(FIT_PROBLEMS) for r in range(len(CAMERA_REGIMES))]
     return tasks

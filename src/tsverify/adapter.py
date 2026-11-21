@@ -13,6 +13,8 @@ unsupported level or feature is skipped as *not supported*, which is reported ap
 - L4 ``fit(problem) -> FitResult``: fit a detector spectrum (:class:`tsverify.fitting.FitProblem`) and return the
   estimates of its free parameters and, if the code has them, their uncertainties. Estimates are in the code's
   conventions, like the start values it receives.
+- L4 ``fit_shot(problem) -> ShotResult``: fit the lineouts of one shot (:class:`tsverify.fitting.ShotProblem`),
+  sizing the camera noise from the data, and return one result per lineout and, optionally, the noise it sized.
 
 The plasma (and the volume's plasma) the adapter receives is already written in the code's conventions.
 """
@@ -37,7 +39,7 @@ FEATURES = frozenset(
         "aperture",
     }
 )
-LEVELS = ("zprime", "spectral_density", "detector_spectrum", "fit")
+LEVELS = ("zprime", "spectral_density", "detector_spectrum", "fit", "fit_shot")
 
 
 class NotSupported(Exception):
@@ -61,6 +63,9 @@ class Adapter:
 
     def fit(self, problem):
         raise NotSupported("fit")
+
+    def fit_shot(self, problem):
+        raise NotSupported("fit_shot")
 
     def supports(self, level):
         return getattr(type(self), level) is not getattr(Adapter, level)
