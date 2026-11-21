@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-11-21)
 
 Camera noise the code must size, a one-sided Cramér–Rao test, and fitters compared across count levels (Part A of
 the noise-sizing plan).
