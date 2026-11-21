@@ -688,6 +688,7 @@ SHOTS = 12
 LINEOUTS = 4
 CAMERA_SEED = 20261121
 READ_NOISE_TOL = 0.2
+GAIN_TOL = 0.1
 REFERENCE_SHOT = 10_000
 
 
@@ -695,14 +696,25 @@ REFERENCE_SHOT = 10_000
 class CameraRegime:
     """``read_noise``: the true read noise at the centre of its shot-to-shot drift (x0.8 to x1.25);
     ``nominal_read_noise``: what the code is told; ``background``: flat background level in counts (drifting x0.7 to
-    x1.4, with a 30 % ramp across the detector); ``check_read_noise``: the read noise matters enough here to score
-    how well the code sized it."""
+    x1.4, with a 30 % ramp across the detector); ``gain_drift``: the range of the true gain times excess over the
+    nominal one, drawn per shot; ``irf_scale``: per channel, the data's instrument function over the one the code
+    is given, a misfit that grows with the level at the peaks (the values below give about 3.6x the noise at the
+    peak on both channels, the 2-5x seen on real ARTS data); ``check_read_noise`` / ``check_gain``: score how well
+    the code sized them here; ``check_pulls``: score the pulls. Under misfit they are a recorded diagnostic: a code
+    that sizes its noise from the residuals weights the noiseless reference fit (pure misfit residuals) differently
+    from the noisy ones, so their estimates differ systematically, and a sigma from the noise alone understates the
+    scatter the misfit adds through data-dependent weights (the oracle reference: IAW Va width 1.35). There the test
+    is whether the noise is still sized right."""
 
     name: str
     read_noise: float
     nominal_read_noise: float
     background: float
     check_read_noise: bool
+    gain_drift: tuple = (1.0, 1.0)
+    irf_scale: tuple = ()
+    check_gain: bool = False
+    check_pulls: bool = True
 
 
 CAMERA_REGIMES = (
@@ -710,14 +722,18 @@ CAMERA_REGIMES = (
     CameraRegime("background", 10.0, 10.0, 2000.0, False),
     CameraRegime("read-noise", 65.0, 65.0, 50.0, True),
     CameraRegime("miscalibrated", 65.0, 17.0, 200.0, True),
+    CameraRegime("gain-drift", 20.0, 20.0, 200.0, True, gain_drift=(1.0, 1.3)),
+    CameraRegime("misfit", 20.0, 20.0, 200.0, True, irf_scale=(("EPW", 1.3), ("IAW", 1.05)), check_pulls=False),
 )
 
 
 def _shot_noise(index, regime_index, shot):
-    """``(rng, true read noise, background level)`` of one shot."""
+    """``(rng, true read noise, background level, true gain scale)`` of one shot."""
     regime = CAMERA_REGIMES[regime_index]
     rng = np.random.default_rng((CAMERA_SEED, index, regime_index, shot))
-    return rng, regime.read_noise * rng.uniform(0.8, 1.25), regime.background * rng.uniform(0.7, 1.4)
+    read = regime.read_noise * rng.uniform(0.8, 1.25)
+    level = regime.background * rng.uniform(0.7, 1.4)
+    return rng, read, level, rng.uniform(*regime.gain_drift)
 
 
 def _shot(case, start, index, regime_index, shot, conventions, noiseless=False):
@@ -725,13 +741,14 @@ def _shot(case, start, index, regime_index, shot, conventions, noiseless=False):
     regime = CAMERA_REGIMES[regime_index]
     det = _counts_detector(case)
     centers = np.linspace(*det.lam_range, det.pixels)
-    expected = oracle_model(conventions, det)(Volume(case.plasma))
-    rng, read, level = _shot_noise(index, regime_index, shot)
+    data_det = dataclasses.replace(det, sigma=det.sigma * dict(regime.irf_scale).get(det.channel, 1.0))
+    expected = oracle_model(conventions, data_det)(Volume(case.plasma))
+    rng, read, level, gain_scale = _shot_noise(index, regime_index, shot)
     if noiseless:
         level = regime.background
     ramp = (centers - centers.mean()) / (centers.max() - centers.mean())
     background = level * (1.0 + 0.3 * ramp)
-    camera = NOMINAL_CAMERA.with_read_noise(read)
+    camera = NOMINAL_CAMERA.with_read_noise(read).with_gain_scale(gain_scale)
     amplitudes = conventions.amplitude_names(det)
     start_volume, _ = fitting.with_values(Volume(case.plasma), {}, start)
     mask = fitting.fit_mask(det, centers)
@@ -768,36 +785,54 @@ def camera_task(name, case, start, index, regime_index):
         shots = [out[f"shot{s:02d}"] for s in range(SHOTS)]
         if any(sig is None for shot in shots for _, sig in shot["fits"]):
             return "not supported", {}, [], "the code reports no uncertainties"
-        measurements, checks, off = {}, [], []
+        measurements, checks, off, pulls_seen = {}, [], [], []
         for parameter in reference:
             pulls = np.array([(est[parameter] - reference[parameter]) / sig[parameter]
                               for shot in shots for est, sig in shot["fits"]])
             mean, width = float(pulls.mean()), float(pulls.std(ddof=1))
             measurements |= {f"{parameter}: pull mean": mean, f"{parameter}: pull width": width,
                              f"{parameter}: 1-sigma coverage": float(np.mean(np.abs(pulls) < 1.0))}
+            if not regime.check_pulls:
+                pulls_seen.append(f"{parameter} mean {mean:+.2f}, width {width:.2f}")
+                continue
             checks += [(f"|{parameter} pull mean|", abs(mean), mean_tol),
                        (f"|{parameter} pull width - 1|", abs(width - 1.0), width_tol)]
             if not (abs(mean) < mean_tol and abs(width - 1.0) < width_tol):
                 off.append(f"{parameter}: mean {mean:+.2f}, width {width:.2f}")
-        true_read = np.array([_shot_noise(index, regime_index, s)[1] for s in range(SHOTS)])
-        sized = [shot["noise"].get("read_noise") if shot["noise"] else None for shot in shots]
-        if all(r is not None for r in sized):
-            ratio = np.asarray(sized, dtype=float) / true_read
-            measurements |= {"read noise sized / true: median": float(np.median(ratio)),
-                             "read noise sized / true: min": float(ratio.min()),
-                             "read noise sized / true: max": float(ratio.max())}
-            if regime.check_read_noise:
-                checks.append(("|read noise sized / true - 1| (median)", abs(float(np.median(ratio)) - 1.0),
-                               READ_NOISE_TOL))
-                if not abs(float(np.median(ratio)) - 1.0) < READ_NOISE_TOL:
-                    off.append(f"read noise sized at {np.median(ratio):.2f} of the truth (median over shots)")
+        truth = [_shot_noise(index, regime_index, s) for s in range(SHOTS)]
+        true = {"read_noise": np.array([t[1] for t in truth]), "gain_scale": np.array([t[3] for t in truth])}
+        true["read_noise_by_level_regression"] = true["read_noise"]
+        labels = {"read_noise": "read noise", "gain_scale": "gain scale",
+                  "read_noise_by_level_regression": "read noise by level regression"}
+        limits = {"read_noise": (regime.check_read_noise, READ_NOISE_TOL), "gain_scale": (regime.check_gain, GAIN_TOL)}
+        for key, label in labels.items():
+            sized = [shot["noise"].get(key) if shot["noise"] else None for shot in shots]
+            if not all(r is not None for r in sized):
+                continue
+            ratio = np.asarray(sized, dtype=float) / true[key]
+            median = float(np.median(ratio))
+            measurements |= {f"{label} sized / true: median": median,
+                             f"{label} sized / true: min": float(ratio.min()),
+                             f"{label} sized / true: max": float(ratio.max())}
+            check, tol = limits.get(key, (False, None))
+            if check:
+                checks.append((f"|{label} sized / true - 1| (median)", abs(median - 1.0), tol))
+                if not abs(median - 1.0) < tol:
+                    off.append(f"{label} sized at {median:.2f} of the truth (median over shots)")
         message = (
             f"L4-camera/{name}/{regime.name}: over {SHOTS} shots of {LINEOUTS} lineouts with camera noise the code "
-            f"sizes itself (nominal read noise {regime.nominal_read_noise:g}, true {regime.read_noise:g} x0.8-1.25), "
-            f"the pulls should have mean 0 (within {mean_tol:.2f}) and width 1 (within {width_tol:.2f}): "
-            + "; ".join(off) + "."
+            f"sizes itself (nominal read noise {regime.nominal_read_noise:g}, true {regime.read_noise:g} x0.8-1.25; "
+            f"gain x{regime.gain_drift[0]:g}-{regime.gain_drift[1]:g}; instrument function "
+            f"x{dict(regime.irf_scale).get(det.channel, 1.0):g}), "
+            + (f"the pulls should have mean 0 (within {mean_tol:.2f}) and width 1 (within {width_tol:.2f})"
+               if regime.check_pulls else "the noise should be sized right")
+            + ": " + "; ".join(off) + "."
         )
-        return _verdict(not off, measurements, checks, message)
+        note = ""
+        if pulls_seen:
+            note = ("pulls under misfit (diagnostic, not scored): " + "; ".join(pulls_seen)
+                    + ". A sigma from the noise alone does not cover the scatter misfit adds.")
+        return _verdict(not off, measurements, checks, message, note)
 
     return Task(f"L4/camera/{name}/{regime.name}", "test_fit_uncertainty_with_camera_noise", "L4", runs, score,
                 slow=True)

@@ -30,6 +30,10 @@ class Camera:
     def with_read_noise(self, read_noise):
         return dataclasses.replace(self, read_noise=float(read_noise))
 
+    def with_gain_scale(self, scale):
+        """The camera with its shot-noise variance per count (gain times excess) scaled by ``scale``."""
+        return dataclasses.replace(self, gain=self.gain * float(scale))
+
     def spread(self, pixels):
         """``C``: the CCD spread function as a matrix on ``pixels`` pixels (a normalized Gaussian, truncated at the
         detector edges; the identity without a spread function)."""

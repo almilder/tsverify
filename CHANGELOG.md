@@ -27,13 +27,27 @@ the noise-sizing plan).
 - **`test_fit_uncertainty_with_camera_noise`** (`slow`, `heavy`):
   - EPW and IAW problems, each with 12 shots of 4 lineouts.
   - Read noise drifting ×0.8–1.25 and background ×0.7–1.4 from shot to shot.
-  - Four regimes: shot-noise, background, read-noise, and miscalibrated (told 17, true about 65).
-  - Scored on pooled pulls and, in the read-noise and miscalibrated regimes, the sized read noise against the
-    truth (median within 20 %).
+  - Six regimes: shot-noise, background, read-noise, miscalibrated (told 17, true about 65), gain-drift (true gain ×
+    excess ×1.0–1.3 over the nominal per shot), and misfit (the data's instrument function is broader than the
+    detector the code is given: ×1.3 on EPW, ×1.05 on IAW, about 3.6× the noise at the peak on both, the 2–5× seen
+    on real ARTS data).
+  - Scored on pooled pulls and, where it matters, the sized read noise against the truth (median within 20 %).
+  - Under misfit the pulls are a recorded diagnostic, not scored, and the sized read noise is the test. A σ from the
+    noise alone does not cover the scatter misfit adds through data-dependent weights, and the noiseless reference
+    fit (pure misfit residuals) is weighted differently from the noisy ones.
+  - The gain-drift and misfit regimes and the difference estimator come from the ARTS-side review of the plan.
   - Shot problems run on the Python route only.
 - **Reference shot fitter** `fitting.sized_shot_fit`, used by `OracleAdapter.fit_shot`:
-  - It fits with the full covariance of the nominal camera, sizes the read noise by maximum likelihood from the
-    residuals of all lineouts pooled (`fitting.size_read_noise`), and fits again.
+  - It fits with the full covariance of the nominal camera, sizes the read noise from short-lag differences (lags
+    1–3) of the residuals of all lineouts pooled, with the brightest tenth left out and the gain held at nominal
+    (`fitting.size_noise_from_differences`), and fits again.
+  - It reports the free gain scale of the difference fit and the read noise of a residual-on-level fit
+    (`fitting.size_read_noise`) for information.
+  - Why differences: a misfit smooth on the pixel scale barely enters them. With the IAW misfit first set 21× the
+    noise, the level fit over-sized the read noise 6.3× and the differences 2.9×.
+  - Why the gain is held: with a spread function, neighbouring shot noise cancels in a difference, and from 4
+    lineouts the gain scale is good to only about ±30 % by any estimator (the level fit is biased +37 % by a 3.6×
+    misfit). The read noise, fixed by the dim pixels, is good to a few percent.
   - `least_squares_fit` takes an optional full covariance (Cholesky whitening) and a background offset.
 - **`tsverify.convergence.compare_fitters(a, b)`**: two fitters on the same noisy data at 1e3, 1e4 and 1e5
   counts. It reports the rms difference, the difference in units of σ, and the log-log slope (about −0.5 when
@@ -43,8 +57,11 @@ the noise-sizing plan).
   all L3 numerics are unchanged.
 - **CI**: the slow oracle job skips `heavy` tests. A new `heavy` workflow (weekly and on demand) runs them.
 - Results:
-  - **Oracle (reference shot fitter):** all 8 camera tasks pass. Pull widths 0.82–1.23, means within ±0.38, read
-    noise sized at 0.98–1.02 of the truth in every regime, including the miscalibrated one (24.8 min).
+  - **Oracle (reference shot fitter):** all 12 camera tasks pass.
+    - Scored regimes: pull widths 0.82–1.21; read noise sized at 0.93–1.02 of the truth.
+    - Misfit: read noise sized at 1.14 (EPW) and 1.03 (IAW) of the truth, while the level fit gives 1.11 and 1.05.
+      The diagnostic pull widths are 1.02–1.21 (EPW) and 0.95–1.35 (IAW Va).
+    - The heavy run takes about 40 min.
   - **Why 12 shots and not 6:** with 6 shots, EPW-miscalibrated failed on the nₑ pull mean (−0.68 against
     ±0.61). Over 16 shots the sized fit and a fit given the true covariance agree exactly (−0.24 ± 0.12 for both),
     so it was a fluctuation of the first six shots, not the sizing. The fix was more shots (more statistics), not a

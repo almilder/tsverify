@@ -163,10 +163,17 @@ The gain, excess-noise factor, rows and spread function given are right; the rea
 | background | 10 | 10 | 2000 counts (drifts ×0.7–1.4, 30 % ramp) |
 | read-noise | 65 | 65 | 50 |
 | miscalibrated | 65 | 17 | 200 |
+| gain-drift | 20 | 20 | 200; the true gain × excess drifts ×1.0–1.3 over the nominal per shot |
+| misfit | 20 | 20 | 200; the data's instrument function is 30 % broader than the detector the code is given (peak misfit about 3.6× the noise) |
 
 `tsverify.fitting.sized_shot_fit` is the reference: it fits each lineout with the full covariance of the nominal
-camera, sizes the read noise by maximum likelihood from the residuals of all lineouts pooled, and fits again. Shot
-problems run on the Python route only for now.
+camera, sizes the read noise from short-lag differences (lags 1–3) of the residuals of all lineouts pooled, with the
+brightest tenth of the pixels left out and the gain held at nominal, and fits again. Differences resist a misfit
+that is smooth on the pixel scale, which a regression of the residuals on the model level takes for noise. With a
+spread function, neighbouring shot noise cancels in a difference, so a few lineouts cannot size the gain (about
+±30 % from 4 lineouts); the read noise, fixed by the dim pixels, they size to a few percent. The free gain scale
+and the level-regression read noise are reported for information. Shot problems run on the Python route only for
+now.
 
 **Two fitters across count levels.** `tsverify.convergence.compare_fitters(a, b)` fits the same noisy data with two
 adapters (two codes, or two configurations of one) at 1e3, 1e4 and 1e5 counts. Consistent fitters differ by an

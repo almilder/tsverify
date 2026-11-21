@@ -239,16 +239,65 @@ def size_read_noise(camera, means, residuals, parameters):
     return float(np.sqrt(np.exp(best.x)))
 
 
+def size_noise_from_differences(camera, means, residuals, lags=(1, 2, 3), exclude_top=0.1, fix_gain=True):
+    """``(gain_scale, read_noise)`` of a shot from short-lag differences of the residuals, pooled over lineouts.
+
+    ``Var(r[i+k] - r[i]) = a (S[i,i] + S[j,j] - 2 S[i,j]) + 2 rows read_noise^2`` for each lag ``k``, with ``S`` the
+    nominal camera's shot covariance (its spread function included, so the neighbour correlation is divided out)
+    and ``a`` the gain scale. A misfit that is smooth on the pixel scale barely enters the differences, so it is not
+    taken for noise, as it is when the residuals themselves are regressed on the model level. Pairs whose level is
+    in the top ``exclude_top`` fraction are left out: sharp peak misfit does enter the differences.
+
+    With a spread function, neighbouring shot noise largely cancels in a difference, so the gain scale is poorly
+    determined from a few lineouts (about +/-30 % from 4 lineouts of 128 pixels); the read noise, fixed by the
+    dim pixels, is determined to a few percent. ``fix_gain`` (default) holds ``a`` at 1 and sizes the read noise
+    only; the returned gain scale is then the free two-parameter estimate, for information."""
+    terms, squares, levels = [], [], []
+    for mean, residual in zip(means, residuals):
+        s = camera.shot_covariance(mean)
+        diag = np.diag(s)
+        for k in lags:
+            terms.append(diag[:-k] + diag[k:] - 2.0 * np.diag(s, k))
+            squares.append((residual[k:] - residual[:-k]) ** 2)
+            levels.append(np.maximum(mean[:-k], mean[k:]))
+    shot, y, level = np.concatenate(terms), np.concatenate(squares), np.concatenate(levels)
+    keep = level <= np.quantile(level, 1.0 - exclude_top)
+    shot, y = shot[keep], y[keep]
+    floor = 2.0 * camera.rows
+
+    def solve(free_gain):
+        scale, read2 = 1.0, max(float(np.median(y)) / floor, 1e-12)
+        for _ in range(4):
+            expected = np.maximum(scale * shot + floor * read2, 1e-12)
+            if free_gain:
+                design = np.stack([shot, np.full_like(shot, floor)], axis=1) / expected[:, None]
+                scale, read2 = np.linalg.lstsq(design, y / expected, rcond=None)[0]
+                scale = max(float(scale), 1e-6)
+            else:
+                read2 = float(np.sum((y - shot) / expected**2) / np.sum(floor / expected**2))
+            read2 = max(float(read2), 1e-12)
+        return scale, read2
+
+    free_scale, free_read2 = solve(True)
+    if not fix_gain:
+        return free_scale, float(np.sqrt(free_read2))
+    _, read2 = solve(False)
+    return free_scale, float(np.sqrt(read2))
+
+
 def sized_shot_fit(model, problem: ShotProblem):
     """The reference shot fitter: fit every lineout with the full covariance of the nominal camera, size the read
-    noise from the pooled residuals (:func:`size_read_noise`), and fit again with it. ``model(volume)`` returns the
-    detector values normalized to the detector amplitude."""
+    noise from short-lag differences of the pooled residuals with the gain held at nominal
+    (:func:`size_noise_from_differences`), and fit again with it. It also reports, for information, the free gain
+    scale of the difference fit and the read noise a residual-on-level fit gives (:func:`size_read_noise`), the
+    estimate that level-dependent misfit inflates. ``model(volume)`` returns the detector values normalized to the
+    detector amplitude."""
     camera = problem.camera
     current = [(lineout.start, lineout.start_amplitudes) for lineout in problem.lineouts]
-    read = camera.read_noise
+    noise = camera
+    sized = {}
     fits = []
     for round_ in range(2):
-        noise = camera.with_read_noise(read)
         fits = []
         for lineout, background, (volume, amplitudes) in zip(problem.lineouts, problem.backgrounds, current):
             mean = predict(model, volume, amplitudes, lineout.detector) + background
@@ -261,5 +310,9 @@ def sized_shot_fit(model, problem: ShotProblem):
             means = [predict(model, volume, amplitudes, lineout.detector) + background
                      for lineout, background, (volume, amplitudes) in zip(problem.lineouts, problem.backgrounds, current)]
             residuals = [lineout.data - mean for lineout, mean in zip(problem.lineouts, means)]
-            read = size_read_noise(camera, means, residuals, len(problem.lineouts[0].free))
-    return ShotResult(tuple(fits), {"read_noise": read})
+            scale, read = size_noise_from_differences(camera, means, residuals)
+            noise = camera.with_read_noise(read)
+            sized = {"read_noise": read, "gain_scale": scale,
+                     "read_noise_by_level_regression": size_read_noise(camera, means, residuals,
+                                                                       len(problem.lineouts[0].free))}
+    return ShotResult(tuple(fits), sized)

@@ -75,3 +75,13 @@ def test_shot_problems_are_python_route_only():
     shots = [t for t in tasks.all_tasks(slow=True) if t.id.startswith("L4/camera/")]
     assert len(shots) == len(tasks.FIT_PROBLEMS) * len(tasks.CAMERA_REGIMES)
     assert all(exchange.not_exported(t, CANONICAL) == exchange.SHOT_PYTHON_ONLY for t in shots)
+
+
+def test_the_difference_estimator_sizes_the_read_noise():
+    from tsverify.fitting import size_noise_from_differences
+
+    rng = np.random.default_rng(3)
+    means = [np.linspace(10.0, 8000.0, 128) for _ in range(8)]
+    residuals = [CAMERA.sample(m, rng) - m for m in means]
+    _, read = size_noise_from_differences(CAMERA.with_read_noise(5.0), means, residuals)
+    assert abs(read / 30.0 - 1.0) < 0.05
